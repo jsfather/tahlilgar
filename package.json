@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/ensure-fonts.mjs",
     "dev": "tsx server.ts",
     "build": "vite build",
     "start": "NODE_ENV=production node server.ts",

@@ -1,5 +1,28 @@
-@import "@fontsource-variable/vazirmatn/wght.css";
 @import "tailwindcss";
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../fonts/vazirmatn/vazirmatn-arabic-wght-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../fonts/vazirmatn/vazirmatn-latin-ext-wght-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../fonts/vazirmatn/vazirmatn-latin-wght-normal.woff2") format("woff2");
+}
 
 @theme {
   --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
