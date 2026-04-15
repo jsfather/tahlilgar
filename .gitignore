@@ -9,3 +9,6 @@ coverage/
 
 # IDE files
 .idea
+
+# Database
+database.sqlite
