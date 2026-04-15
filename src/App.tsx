@@ -640,7 +640,7 @@ const HomePage = () => {
         <div className="max-w-7xl mx-auto px-4 text-center text-gray-500">
           <p>
             © {new Date().getFullYear()} {settings.site_name}. تمامی حقوق محفوظ
-            هست
+            است
           </p>
         </div>
       </footer>
