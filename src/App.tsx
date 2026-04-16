@@ -392,9 +392,11 @@ const QuoteSection = ({ quotes }: { quotes: string[] }) => {
 const PublicForm = ({
   form,
   settings,
+  successMessage,
 }: {
   form: FormDefinition;
   settings: SiteSettings;
+  successMessage?: ContentBlock;
 }) => {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -436,6 +438,10 @@ const PublicForm = ({
   };
 
   if (isSuccess) {
+    const successTitle = successMessage?.title || "اطلاعات با موفقیت ثبت شد";
+    const successBody =
+      successMessage?.body ||
+      "کارشناسان ما به زودی با شما تماس خواهند گرفت. تا آن زمان می‌توانید ویدیوی زیر را مشاهده کنید.";
     return (
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
@@ -448,13 +454,12 @@ const PublicForm = ({
         <h3
           className={`text-3xl font-bold mb-4 ${isDark ? "text-white" : "text-gray-900"}`}
         >
-          اطلاعات با موفقیت ثبت شد
+          {successTitle}
         </h3>
         <p
           className={`text-lg mb-8 ${isDark ? "text-slate-400" : "text-gray-600"}`}
         >
-          کارشناسان ما به زودی با شما تماس خواهند گرفت. تا آن زمان می‌توانید
-          ویدیوی زیر را مشاهده کنید.
+          {successBody}
         </p>
 
         <div className="aspect-video bg-slate-900 rounded-3xl overflow-hidden mb-8 shadow-xl">
@@ -604,6 +609,12 @@ const HomePage = () => {
     title: settings.site_name,
     body: settings.site_description,
   };
+  const formsSection = content.find((c) => c.id === "forms_section") || {
+    id: "forms_section",
+    title: "فرم‌های تحلیل هوشمند",
+    body: "برای دریافت مشاوره اختصاصی و تحلیل دقیق دارایی‌های خود، فرم مربوطه را تکمیل نمایید.",
+  };
+  const successMessage = content.find((c) => c.id === "success_message");
 
   return (
     <>
@@ -617,17 +628,21 @@ const HomePage = () => {
           <h2
             className={`text-4xl font-bold mb-4 ${isDark ? "text-white" : "text-gray-900"}`}
           >
-            فرم‌های تحلیل هوشمند
+            {formsSection.title}
           </h2>
           <p className={`${isDark ? "text-slate-400" : "text-gray-600"}`}>
-            برای دریافت مشاوره اختصاصی و تحلیل دقیق دارایی‌های خود، فرم مربوطه
-            را تکمیل نمایید.
+            {formsSection.body}
           </p>
         </div>
 
         <div className="space-y-20">
           {forms?.map((form) => (
-            <PublicForm key={form.id} form={form} settings={settings} />
+            <PublicForm
+              key={form.id}
+              form={form}
+              settings={settings}
+              successMessage={successMessage}
+            />
           ))}
         </div>
       </section>
@@ -751,6 +766,28 @@ const AdminPanel = () => {
       const dateB = new Date(b.created_at).getTime();
       return sortOrder === "desc" ? dateB - dateA : dateA - dateB;
     });
+
+  const deleteLead = async (id: number) => {
+    try {
+      const res = await fetch(`/api/submissions/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setSubmissions((prev) => prev.filter((s) => s.id !== id));
+        setNotification({ message: "لید با موفقیت حذف شد", type: "success" });
+      } else {
+        const data = await res.json().catch(() => null);
+        setNotification({
+          message: data?.message || "خطا در حذف لید",
+          type: "error",
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setNotification({
+        message: "خطا در برقراری ارتباط با سرور",
+        type: "error",
+      });
+    }
+  };
 
   if (!isLoggedIn) {
     return (
@@ -973,15 +1010,28 @@ const AdminPanel = () => {
                           </p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <span className="text-xs text-gray-400 block mb-1">
-                          ایمیل شناسایی
-                        </span>
-                        <span
-                          className={`text-sm font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}
+                      <div className="flex items-start gap-4">
+                        <div className="text-right">
+                          <span className="text-xs text-gray-400 block mb-1">
+                            ایمیل شناسایی
+                          </span>
+                          <span
+                            className={`text-sm font-bold ${isDark ? "text-slate-300" : "text-gray-700"}`}
+                          >
+                            {sub.email || "نامشخص"}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (confirm("آیا از حذف این لید مطمئن هستید؟")) {
+                              deleteLead(sub.id);
+                            }
+                          }}
+                          className={`p-3 rounded-2xl transition-all ${isDark ? "text-red-400 hover:bg-red-900/20" : "text-red-500 hover:bg-red-50"}`}
+                          title="حذف لید"
                         >
-                          {sub.email || "نامشخص"}
-                        </span>
+                          <Trash2 size={18} />
+                        </button>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
@@ -1383,22 +1433,20 @@ const AdminPanel = () => {
                         type="color"
                         className="w-16 h-14 rounded-xl cursor-pointer"
                         value={settings.primary_color}
-                        onChange={(e) =>
-                          setSettings({
-                            ...settings,
-                            primary_color: e.target.value,
-                          })
-                        }
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setSettings({ ...settings, primary_color: next });
+                          setPrimaryColor(next);
+                        }}
                       />
                       <input
                         className={`flex-1 px-6 py-4 rounded-2xl border outline-none ${isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-white border-gray-200 text-gray-900"}`}
                         value={settings.primary_color}
-                        onChange={(e) =>
-                          setSettings({
-                            ...settings,
-                            primary_color: e.target.value,
-                          })
-                        }
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setSettings({ ...settings, primary_color: next });
+                          setPrimaryColor(next);
+                        }}
                       />
                     </div>
                   </div>

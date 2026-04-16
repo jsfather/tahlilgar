@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 
 const db = new Database("database.sqlite");
+db.pragma("foreign_keys = ON");
 
 // Initialize database
 db.exec(`
@@ -77,6 +78,18 @@ if (settingsCount.count === 0) {
   ]);
   db.prepare("INSERT INTO forms (name, fields) VALUES (?, ?)").run("فرم تحلیل دارایی", initialFields);
 }
+
+// Ensure core content blocks exist (for editable UI copy)
+db.prepare("INSERT OR IGNORE INTO content (id, title, body) VALUES (?, ?, ?)").run(
+  "forms_section",
+  "فرم‌های تحلیل هوشمند",
+  "برای دریافت مشاوره اختصاصی و تحلیل دقیق دارایی‌های خود، فرم مربوطه را تکمیل نمایید.",
+);
+db.prepare("INSERT OR IGNORE INTO content (id, title, body) VALUES (?, ?, ?)").run(
+  "success_message",
+  "اطلاعات با موفقیت ثبت شد",
+  "کارشناسان ما به زودی با شما تماس خواهند گرفت. تا آن زمان می‌توانید ویدیوی زیر را مشاهده کنید.",
+);
 
 async function startServer() {
   const app = express();
@@ -170,7 +183,11 @@ async function startServer() {
 
   app.delete("/api/forms/:id", (req, res) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM forms WHERE id = ?").run(id);
+    const tx = db.transaction(() => {
+      db.prepare("DELETE FROM submissions WHERE form_id = ?").run(id);
+      db.prepare("DELETE FROM forms WHERE id = ?").run(id);
+    });
+    tx();
     res.json({ success: true });
   });
 
@@ -190,6 +207,15 @@ async function startServer() {
       ORDER BY s.created_at DESC
     `).all();
     res.json(submissions.map((s: any) => ({ ...s, data: JSON.parse(s.data) })));
+  });
+
+  app.delete("/api/submissions/:id", (req, res) => {
+    const { id } = req.params;
+    const result = db.prepare("DELETE FROM submissions WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, message: "لید یافت نشد" });
+    }
+    return res.json({ success: true });
   });
 
   app.post("/api/login", (req, res) => {
