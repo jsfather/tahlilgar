@@ -1,5 +1,6 @@
 {
-  "name": "Tahlilgar Clone",
-  "description": "A smart asset analysis platform with a customizable admin panel for forms and content management.",
-  "requestFramePermissions": []
+  "name": "مجموعه کارآفرینی پوردانش",
+  "description": "لندینگ پیج اختصاصی مجموعه کارآفرینی پوردانش همراه با پنل مدیریت، تایید هویت پیامکی و آمار پیشرفته",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

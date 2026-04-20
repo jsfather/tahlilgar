@@ -1,57 +1,51 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;400;700&display=swap');
 
-@font-face {
-  font-family: "Vazirmatn";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 900;
-  src: url("../fonts/vazirmatn/vazirmatn-arabic-wght-normal.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Vazirmatn";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 900;
-  src: url("../fonts/vazirmatn/vazirmatn-latin-ext-wght-normal.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Vazirmatn";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 900;
-  src: url("../fonts/vazirmatn/vazirmatn-latin-wght-normal.woff2") format("woff2");
-}
+@config "../tailwind.config.js";
 
 @theme {
   --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
-  --color-primary: var(--primary-color);
-}
-
-:root {
-  --primary-color: #2563eb;
-}
-
-.dark {
-  background-color: #0f172a;
-  color: #f8fafc;
+  --font-dana: "Dana", "Vazirmatn", sans-serif;
 }
 
 @layer base {
-  body {
-    @apply font-sans transition-colors duration-300;
+  html {
+    direction: rtl;
+    font-family: var(--font-dana);
   }
 }
 
-.primary-bg {
-  background-color: var(--primary-color);
+.font-dana {
+  font-family: var(--font-dana);
 }
 
-.primary-text {
-  color: var(--primary-color);
+/* Custom animations */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
-.primary-border {
-  border-color: var(--primary-color);
+.animate-pulse-soft {
+  animation: pulse-soft 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.rtl-editor-content p, .rtl-editor-content div, .rtl-editor-content span, .ql-editor p {
+  direction: rtl;
+  text-align: right;
+}
+
+.ql-editor {
+  text-align: right;
+  direction: rtl;
+  min-height: 200px;
+}
+
+.ql-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 1rem;
+}
+
+.rtl-editor-content {
+  overflow-wrap: break-word;
 }
