@@ -1,0 +1,58 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    name: SSH Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}         # Optional — defaults to 22
+          script_stop: true                      # Abort on first failed command
+          script: |
+            # ── Proxy settings for this session ──────────────────────────
+            export http_proxy="http://127.0.0.1:10808"
+            export https_proxy="http://127.0.0.1:10808"
+            export ALL_PROXY="socks5://127.0.0.1:10809"
+
+            # ── Load nvm so Node 24 is available ─────────────────────────
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            nvm use 24 || nvm install 24
+
+            node -v   # sanity-check — printed in the Actions log
+
+            # ── Go to project directory ───────────────────────────────────
+            cd /var/www/tahlilgar
+
+            # ── Pull latest changes ───────────────────────────────────────
+            git pull origin develop
+
+            # ── Install dependencies (ci is safer in production) ─────────
+            npm ci
+
+            # ── Build ─────────────────────────────────────────────────────
+            npm run build
+
+            # ── Reload PM2 process ────────────────────────────────────────
+            pm2 reload tahlilgar-app --update-env
+
+            # ── Persist PM2 state across reboots ─────────────────────────
+            pm2 save
+
+            echo "✅ Deployment finished successfully"
