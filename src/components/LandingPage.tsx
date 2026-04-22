@@ -23,6 +23,7 @@ export default function LandingPage() {
   const [showContact, setShowContact] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
+  const [customStats, setCustomStats] = useState<any[]>([]);
 
   useEffect(() => {
     if (settings.show_testimonials === '1') {
@@ -30,6 +31,9 @@ export default function LandingPage() {
         .then(res => setTestimonials(res.data))
         .catch(err => console.error(err));
     }
+    axios.get('/api/custom-stats')
+      .then(res => setCustomStats(res.data))
+      .catch(err => console.error(err));
   }, [settings.show_testimonials]);
 
   useEffect(() => {
@@ -122,7 +126,15 @@ export default function LandingPage() {
         </div>
       )}
 
-      <main className={`flex-grow container mx-auto px-4 py-8 ${!isVerified ? 'flex items-center justify-center' : ''}`}>
+      <main 
+        className={`flex-grow container mx-auto px-4 py-8 ${!isVerified ? 'flex items-center justify-center min-w-full' : ''}`}
+        style={!isVerified ? { 
+          backgroundColor: settings.registration_bg_color || undefined,
+          backgroundImage: settings.registration_bg_image ? `url(${settings.registration_bg_image})` : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        } : {}}
+      >
         {!isVerified ? (
           <div className="max-w-xl mx-auto w-full">
             <motion.div 
@@ -159,21 +171,44 @@ export default function LandingPage() {
               </div>
             </header>
 
+            {/* Top Banner (Above Video) */}
+            {settings.top_banner_enabled === '1' && settings.top_banner_image && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="w-full rounded-2xl md:rounded-[2.5rem] overflow-hidden shadow-lg border border-gray-100"
+              >
+                <img 
+                  src={settings.top_banner_image} 
+                  alt="Top Banner" 
+                  className="w-full h-auto object-cover" 
+                  referrerPolicy="no-referrer"
+                />
+              </motion.div>
+            )}
+
+            {/* Video Banner (Optional) */}
+            {settings.video_banner_enabled === '1' && settings.video_banner_image && (
+              <div className="w-full">
+                 <img src={settings.video_banner_image} className="w-full rounded-2xl md:rounded-[2rem] shadow-md" alt="Video Banner" referrerPolicy="no-referrer" />
+              </div>
+            )}
+
             {/* Video Section */}
             <div className="bg-white dark:bg-gray-800 rounded-2xl md:rounded-[2.5rem] shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
               <VideoPlayer 
                 type={settings.video_type} 
                 link={settings.video_link} 
                 cover={settings.video_cover}
-                showVideo={settings.show_video === '1'}
+                showVideo={settings.video_no_timer === '1' || settings.show_video === '1'}
                 countdownEnd={settings.countdown_end}
                 placeholderTitle={settings.timer_title}
                 placeholderText={settings.video_placeholder_text}
               />
             </div>
 
-            <div className={`grid grid-cols-1 ${settings.show_video === '1' ? 'md:grid-cols-2' : ''} gap-6 md:gap-8`}>
-              {settings.show_video === '1' && (
+            <div className={`grid grid-cols-1 ${settings.show_video === '1' && settings.show_timer === '1' ? 'md:grid-cols-2' : ''} gap-6 md:gap-8`}>
+              {settings.show_video === '1' && settings.show_timer === '1' && (
                 <div className="bg-gradient-to-br from-indigo-900 to-blue-800 rounded-3xl md:rounded-[2rem] p-6 md:p-8 text-white shadow-xl flex flex-col items-center justify-center text-center">
                   <h3 className="text-sm md:text-lg font-medium opacity-80 mb-4">{settings.timer_title}</h3>
                   <div className="w-full flex justify-center">
@@ -204,16 +239,26 @@ export default function LandingPage() {
             </div>
 
             {/* Stats */}
-            <div className="bg-amber-50 dark:bg-amber-900/10 rounded-3xl md:rounded-[2rem] p-6 md:p-8 border border-amber-100 dark:border-amber-900/30">
-               <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                  <div className="space-y-1 text-center md:text-right">
-                    <h4 className="text-lg md:text-xl font-bold text-amber-900 dark:text-amber-200">{settings.stats_title}</h4>
-                    <p className="text-xs md:text-base text-amber-700 dark:text-amber-400">{settings.stats_description}</p>
-                  </div>
-                  <div className="flex items-baseline justify-center md:justify-end gap-2">
-                    <span className="text-4xl md:text-5xl font-black text-amber-600">{settings.missed_opportunities_count}</span>
-                    <span className="text-amber-700 dark:text-amber-400 font-medium">مورد</span>
-                  </div>
+            <div className="space-y-8">
+               <div className="text-center md:text-right space-y-2">
+                 <h4 className="text-2xl md:text-3xl font-black text-gray-900">{settings.stats_title || 'فرصت‌های درآمدزایی اجرایی شده'}</h4>
+                 <p className="text-gray-500 font-medium">{settings.stats_description || 'مجموعه پوردانش تا کنون مسیر موفقیت هزاران نفر را هموار کرده است.'}</p>
+               </div>
+               
+               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                 {/* Default Stat (Total) */}
+                 <div className="bg-amber-50 dark:bg-amber-900/10 rounded-3xl p-6 border border-amber-100 dark:border-amber-900/30 flex flex-col items-center justify-center text-center space-y-2">
+                    <span className="text-3xl md:text-4xl font-black text-amber-600 line-clamp-1">{settings.missed_opportunities_count}</span>
+                    <span className="text-[10px] md:text-xs text-amber-700 dark:text-amber-400 font-black uppercase tracking-widest">مجموع کل</span>
+                 </div>
+                 
+                 {/* Custom Stats Cards */}
+                 {customStats.map((cs, idx) => (
+                   <div key={cs.id || idx} className="bg-blue-50 dark:bg-blue-900/10 rounded-3xl p-6 border border-blue-100 dark:border-blue-900/30 flex flex-col items-center justify-center text-center space-y-2 group hover:scale-[1.02] transition-transform">
+                      <span className="text-3xl md:text-4xl font-black text-blue-600 line-clamp-1">{cs.count}</span>
+                      <span className="text-[10px] md:text-xs text-blue-700 dark:text-blue-400 font-black uppercase tracking-widest">{cs.title}</span>
+                   </div>
+                 ))}
                </div>
             </div>
 

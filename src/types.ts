@@ -44,6 +44,33 @@ export interface Settings {
   form_phone_label?: string;
   stats_title?: string;
   stats_description?: string;
+  show_timer?: string;
+  top_banner_enabled?: string;
+  top_banner_image?: string;
+  registration_bg_color?: string;
+  registration_bg_image?: string;
+  sms_username?: string;
+  sms_password?: string;
+  sms_is_pattern?: string;
+  auto_sms_enabled?: string;
+}
+
+export interface Team {
+  id: number;
+  name: string;
+  supervisor_id: number;
+  supervisor_name?: string;
+  created_at: string;
+}
+
+export interface ScheduledSMS {
+  id: number;
+  title: string;
+  message: string;
+  send_after_days: number;
+  target: string;
+  is_active: number;
+  created_at: string;
 }
 
 export interface Testimonial {
@@ -162,6 +189,8 @@ export interface User {
   username: string;
   role: string;
   permissions: string; // JSON string
+  team_id?: number;
+  last_active_at?: string;
 }
 
 export interface Download {

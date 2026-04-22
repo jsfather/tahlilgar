@@ -9,6 +9,7 @@ import fs from 'fs';
 import jalaali from 'jalaali-js';
 
 import multer from 'multer';
+import * as XLSX from 'xlsx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -186,15 +187,47 @@ db.exec(`
     username TEXT UNIQUE,
     password TEXT,
     role TEXT DEFAULT 'admin',
-    permissions TEXT DEFAULT '["stats","leads","content","downloads","sms","seo","admins"]'
+    permissions TEXT DEFAULT '["stats","leads","content","downloads","sms","seo","admins"]',
+    team_id INTEGER,
+    last_active_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    supervisor_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(supervisor_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS scheduled_sms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    message TEXT,
+    send_after_days INTEGER, -- 1 to 60
+    target TEXT DEFAULT 'leads', -- leads or customers
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS lead_scheduled_sms_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER,
+    sms_id INTEGER,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(lead_id) REFERENCES leads(id),
+    FOREIGN KEY(sms_id) REFERENCES scheduled_sms(id)
   );
 
   CREATE TABLE IF NOT EXISTS announcements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
+    team_id INTEGER, -- Added for team-specific announcements
     content TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id)
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(team_id) REFERENCES teams(id)
   );
 
   CREATE TABLE IF NOT EXISTS tickets (
@@ -228,6 +261,22 @@ db.exec(`
     FOREIGN KEY(lead_id) REFERENCES leads(id),
     FOREIGN KEY(product_id) REFERENCES products(id),
     FOREIGN KEY(expert_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS user_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    type TEXT, -- login, logout
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS custom_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    count TEXT,
+    order_index INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS ticket_messages (
@@ -279,7 +328,10 @@ try { db.exec(`
     FOREIGN KEY(expert_id) REFERENCES users(id)
   )
 `); } catch(e) {}
-try { db.exec('ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT \'["stats","leads","content","downloads","sms","seo","admins"]\''); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[\"stats\",\"leads\",\"content\",\"downloads\",\"sms\",\"seo\",\"admins\"]'"); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN team_id INTEGER"); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN last_active_at DATETIME"); } catch(e) {}
+try { db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"); } catch(e) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone)"); } catch(e) {}
 
 // Seed initial data
@@ -332,7 +384,19 @@ const seedSettings = [
   ['custom_popup_link', ''],
   ['custom_popup_label', ''],
   ['lead_assignment_mode', 'manual'], // manual or round_robin
-  ['last_expert_idx', '0']
+  ['last_expert_idx', '0'],
+  ['seo_title', 'مجموعه کارآفرینی پوردانش | تجارت هوشمند'],
+  ['seo_description', 'لندینگ پیج اختصاصی مجموعه کارآفرینی پوردانش برای همراهی تاجران و سرمایه گذاران'],
+  ['seo_keywords', 'پوردانش, تجارت, سرمایه گذاری, کارآفرینی, وبینار'],
+  ['show_timer', '1'],
+  ['top_banner_enabled', '0'],
+  ['top_banner_image', ''],
+  ['registration_bg_color', '#f3f4f6'],
+  ['registration_bg_image', ''],
+  ['sms_username', ''],
+  ['sms_password', ''],
+  ['sms_is_pattern', '0'],
+  ['auto_sms_enabled', '1']
 ];
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
@@ -354,6 +418,42 @@ async function startServer() {
   // Serve uploads statically
   app.use('/uploads', express.static(uploadsDir));
 
+  // Middleware to track activity
+  app.use((req, res, next) => {
+    const userId = req.headers['x-user-id'];
+    if (userId) {
+      db.prepare('UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?').run(Number(userId));
+    }
+    next();
+  });
+
+  const assignLead = (leadId: number, forcedExpert?: string) => {
+    if (forcedExpert && forcedExpert !== 'none') {
+      db.prepare('UPDATE leads SET expert = ?, status = ? WHERE id = ?').run(forcedExpert, 'تخصیص داده شده', leadId);
+      db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
+        .run(leadId, 1, 'note', `تخصیص دستی به کارشناس: ${forcedExpert}`);
+      return forcedExpert;
+    }
+
+    const assignmentMode = db.prepare("SELECT value FROM settings WHERE key = 'lead_assignment_mode'").get() as any;
+    if (assignmentMode?.value === 'round_robin') {
+      const experts = db.prepare("SELECT username FROM users WHERE role = 'expert'").all() as any[];
+      if (experts.length > 0) {
+        const lastIdxRes = db.prepare("SELECT value FROM settings WHERE key = 'last_expert_idx'").get() as any;
+        let nextIdx = (parseInt(lastIdxRes?.value || '0') + 1) % experts.length;
+        const expert = experts[nextIdx].username;
+
+        db.prepare('UPDATE leads SET expert = ?, status = ? WHERE id = ?').run(expert, 'تخصیص داده شده', leadId);
+        db.prepare("UPDATE settings SET value = ? WHERE key = 'last_expert_idx'").run(String(nextIdx));
+        
+        db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
+          .run(leadId, 1, 'note', `تخصیص خودکار (Round-Robin) به کارشناس: ${expert}`);
+        return expert;
+      }
+    }
+    return null;
+  };
+
   // Multer setup
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -370,6 +470,90 @@ async function startServer() {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
     res.json({ url: fileUrl });
+  });
+
+  app.use((req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+       const userId = req.headers['x-user-id']; // This is a bit insecure if client sets it, but for our demo dashboard it's okay. 
+       // Better: decode the token. Assuming user handles it in actual app. 
+       // For now let's just make it simpler for them to pass the ID if needed or we stick to a heart beat.
+    }
+    next();
+  });
+
+  app.post('/api/heartbeat', (req, res) => {
+    try {
+      const { userId } = req.body;
+      if (userId) {
+        db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?').run(new Date().toISOString(), userId);
+      }
+      res.json({ success: true });
+    } catch (e) {
+      res.json({ success: false });
+    }
+  });
+
+  app.post('/api/auth/log', (req, res) => {
+    try {
+      const { user_id, type } = req.body;
+      if (user_id && type) {
+        db.prepare('INSERT INTO user_logs (user_id, type) VALUES (?, ?)').run(user_id, type);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.json({ success: false });
+    }
+  });
+
+  app.get('/api/online-users', (req, res) => {
+    try {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const users = db.prepare('SELECT id, username, role, last_active_at FROM users WHERE last_active_at > ?').all(fiveMinutesAgo);
+      res.json(users || []);
+    } catch (error) {
+      res.json([]);
+    }
+  });
+
+  app.get('/api/user-profile/:id', (req, res) => {
+    try {
+      const user = db.prepare('SELECT id, username, role, permissions, team_id, last_active_at, created_at FROM users WHERE id = ?').get(req.params.id) as any;
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      const activities = db.prepare(`
+        SELECT * FROM lead_activities 
+        WHERE expert_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 100
+      `).all(user.id);
+
+      const logs = db.prepare(`
+        SELECT * FROM user_logs 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 100
+      `).all(user.id);
+
+      // Sales summary if applicable
+      const sales = db.prepare(`
+          SELECT count(*) as count, sum(amount) as total 
+          FROM deposits 
+          WHERE expert_id = ? AND status = 'confirmed'
+      `).get(user.id) as any;
+
+      res.json({
+         user,
+         activity: activities || [],
+         logs: logs || [],
+         stats: {
+           total_sales: sales?.count || 0,
+           total_amount: sales?.total || 0
+         }
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Internal error' });
+    }
   });
 
   // API Routes
@@ -403,22 +587,80 @@ async function startServer() {
 
   // Admin Management
   app.get('/api/admins', (req, res) => {
-    const users = db.prepare('SELECT id, username, role, permissions FROM users').all();
+    const users = db.prepare('SELECT id, username, role, permissions, team_id, last_active_at FROM users').all();
     res.json(users);
   });
 
   app.post('/api/admins', (req, res) => {
-    const { username, password, role, permissions, id } = req.body;
+    const { username, password, role, permissions, team_id, id } = req.body;
     const permsString = Array.isArray(permissions) ? JSON.stringify(permissions) : permissions;
+    const tid = team_id ? Number(team_id) : null;
+
     if (id) {
       if (password) {
-        db.prepare('UPDATE users SET username = ?, password = ?, role = ?, permissions = ? WHERE id = ?').run(username ?? null, password ?? null, role ?? null, permsString ?? null, id);
+        db.prepare('UPDATE users SET username = ?, password = ?, role = ?, permissions = ?, team_id = ? WHERE id = ?').run(username ?? null, password ?? null, role ?? null, permsString ?? null, tid, id);
       } else {
-        db.prepare('UPDATE users SET username = ?, role = ?, permissions = ? WHERE id = ?').run(username ?? null, role ?? null, permsString ?? null, id);
+        db.prepare('UPDATE users SET username = ?, role = ?, permissions = ?, team_id = ? WHERE id = ?').run(username ?? null, role ?? null, permsString ?? null, tid, id);
       }
     } else {
-      db.prepare('INSERT INTO users (username, password, role, permissions) VALUES (?, ?, ?, ?)').run(username ?? null, password ?? null, role ?? null, permsString ?? null);
+      db.prepare('INSERT INTO users (username, password, role, permissions, team_id) VALUES (?, ?, ?, ?, ?)').run(username ?? null, password ?? null, role ?? null, permsString ?? null, tid);
     }
+    res.json({ success: true });
+  });
+
+  // Team Management APIs
+  app.get('/api/teams', (req, res) => {
+    const teams = db.prepare(`
+      SELECT t.*, u.username as supervisor_name 
+      FROM teams t 
+      LEFT JOIN users u ON t.supervisor_id = u.id
+    `).all();
+    res.json(teams);
+  });
+
+  app.post('/api/teams', (req, res) => {
+    const { name, supervisor_id, id } = req.body;
+    if (id) {
+      db.prepare('UPDATE teams SET name = ?, supervisor_id = ? WHERE id = ?').run(name, supervisor_id || null, id);
+      res.json({ success: true });
+    } else {
+      const result = db.prepare('INSERT INTO teams (name, supervisor_id) VALUES (?, ?)').run(name, supervisor_id || null);
+      res.json({ id: result.lastInsertRowid });
+    }
+  });
+
+  app.delete('/api/teams/:id', (req, res) => {
+    db.prepare('UPDATE users SET team_id = NULL WHERE team_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM teams WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Scheduled SMS APIs
+  app.get('/api/scheduled-sms', (req, res) => {
+    res.json(db.prepare('SELECT * FROM scheduled_sms ORDER BY send_after_days ASC').all());
+  });
+
+  app.post('/api/scheduled-sms', (req, res) => {
+    const { title, message, send_after_days, target, is_active, id } = req.body;
+    if (id) {
+      db.prepare('UPDATE scheduled_sms SET title = ?, message = ?, send_after_days = ?, target = ?, is_active = ? WHERE id = ?')
+        .run(title, message, send_after_days, target, is_active ? 1 : 0, id);
+      res.json({ success: true });
+    } else {
+      const result = db.prepare('INSERT INTO scheduled_sms (title, message, send_after_days, target, is_active) VALUES (?, ?, ?, ?, ?)')
+        .run(title, message, send_after_days, target, is_active ? 1 : 0);
+      res.json({ id: result.lastInsertRowid });
+    }
+  });
+
+  app.delete('/api/scheduled-sms/:id', (req, res) => {
+    db.prepare('DELETE FROM scheduled_sms WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.post('/api/leads/re-followup', (req, res) => {
+    const { lead_id } = req.body;
+    db.prepare('DELETE FROM lead_scheduled_sms_log WHERE lead_id = ?').run(lead_id);
     res.json({ success: true });
   });
 
@@ -427,16 +669,98 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.post('/api/leads/create', (req, res) => {
+    const { name, surname, phone, expert, custom_data } = req.body;
+    try {
+      const existing = db.prepare('SELECT id FROM leads WHERE phone = ?').get(String(phone));
+      if (existing) return res.status(400).json({ error: 'لیدی با این شماره قبلاً ثبت شده است' });
+
+      const result = db.prepare('INSERT INTO leads (name, surname, phone, custom_data, expert, status) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(name || '', surname || '', String(phone), custom_data ? JSON.stringify(custom_data) : null, expert || null, expert ? 'تخصیص داده شده' : 'جدید');
+      
+      const leadId = Number(result.lastInsertRowid);
+      if (!expert) {
+        assignLead(leadId);
+      } else {
+        db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
+          .run(leadId, 1, 'note', `ثبت دستی و تخصیص به کارشناس: ${expert}`);
+      }
+
+      res.json({ success: true, id: leadId });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/leads/bulk-upload', upload.single('file'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'فایلی انتخاب نشده است' });
+    const { assignment_mode, expert } = req.body;
+
+    try {
+      const workbook = XLSX.readFile(req.file.path);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet) as any[];
+
+      let count = 0;
+      let skipped = 0;
+
+      const insertStmt = db.prepare('INSERT OR IGNORE INTO leads (name, surname, phone, status) VALUES (?, ?, ?, ?)');
+      
+      db.transaction(() => {
+        for (const row of data) {
+          const phone = String(row.phone || row['شماره'] || row['موبایل'] || row['phone_number'] || '').trim();
+          if (!phone) { skipped++; continue; }
+          const name = String(row.name || row['نام'] || '').trim();
+          const surname = String(row.surname || row['نام خانوادگی'] || '').trim();
+
+          const result = insertStmt.run(name, surname, phone, 'جدید');
+          if (result.changes > 0) {
+            count++;
+            const leadId = Number(result.lastInsertRowid);
+            if (assignment_mode === 'manual' && expert) {
+              assignLead(leadId, expert);
+            } else {
+              assignLead(leadId);
+            }
+          } else {
+            skipped++;
+          }
+        }
+      })();
+
+      res.json({ success: true, count, skipped });
+    } catch (e: any) {
+      console.error('Bulk upload error:', e);
+      res.status(500).json({ error: e.message });
+    } finally {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    }
+  });
+
   app.get('/api/leads', (req, res) => {
-    const { search, startDate, endDate, expert } = req.query;
+    const { search, startDate, endDate, expert, team_id, supervisor_id } = req.query;
     let query = 'SELECT * FROM leads';
     let params: any[] = [];
     let conditions: string[] = [];
 
-    // EXPERT PROTECTION: If expert is provided via query, it means the UI is restricted.
-    // However, we should also check the user's role on the frontend side.
-    // For full security, we'd need a token-based auth here, but following the current pattern:
-    if (expert && typeof expert === 'string') {
+    if (supervisor_id) {
+      // Supervisor can see leads assigned to their team members
+      const teamMates = db.prepare(`
+        SELECT username FROM users 
+        WHERE team_id = (SELECT team_id FROM users WHERE id = ?)
+      `).all(Number(supervisor_id)) as any[];
+      
+      if (teamMates.length > 0) {
+        const usernames = teamMates.map(u => u.username);
+        conditions.push(`expert IN (${usernames.map(() => '?').join(',')})`);
+        params.push(...usernames);
+      } else {
+        conditions.push('1=0'); // No team members = no leads visible
+      }
+    } else if (expert && typeof expert === 'string') {
       conditions.push('expert = ?');
       params.push(expert);
     }
@@ -581,18 +905,15 @@ async function startServer() {
 
   app.post('/api/sms/send-direct', async (req, res) => {
     const { phone, message, pattern_code, expert_id, lead_id } = req.body;
-    // For now, since we only have pattern-based SMS implementation in the system, 
-    // and direct text sending might be restricted or require a specific pattern for IPPanel... 
-    // WE WILL LOG IT and simulate it if no API key.
     
-    console.log(`[SMS Simulation] To: ${phone}, Pattern: ${pattern_code || 'N/A'}, Content: ${message}`);
+    const result = await sendSMS(phone, message, pattern_code);
     
     if (lead_id && expert_id) {
       db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
         .run(lead_id, expert_id, 'sms_sent', `پیامک ارسال شد: ${message}`);
     }
     
-    res.json({ success: true });
+    res.json({ success: result.success });
   });
 
   app.delete('/api/leads/:id', (req, res) => {
@@ -622,18 +943,25 @@ async function startServer() {
   app.post('/api/leads/bulk-delete', (req, res) => {
     const { ids } = req.body;
     console.log(`📡 BULK DELETE request received for IDs:`, ids);
-    const stmt = db.prepare('DELETE FROM leads WHERE id = ?');
-    const transaction = db.transaction((idList) => {
-      let count = 0;
-      for (const id of idList) {
-        const res = stmt.run(Number(id));
-        count += res.changes;
-      }
-      return count;
-    });
-    const totalChanges = transaction(ids);
-    console.log(`✅ BULK DELETE successful. Total rows deleted: ${totalChanges}`);
-    res.json({ success: true, changes: totalChanges });
+    try {
+      db.transaction(() => {
+        for (const id of ids) {
+          const leadId = Number(id);
+          db.prepare('DELETE FROM ticket_messages WHERE ticket_id IN (SELECT id FROM tickets WHERE lead_id = ?)').run(leadId);
+          db.prepare('DELETE FROM tickets WHERE lead_id = ?').run(leadId);
+          db.prepare('DELETE FROM follow_ups WHERE lead_id = ?').run(leadId);
+          db.prepare('DELETE FROM lead_activities WHERE lead_id = ?').run(leadId);
+          db.prepare('DELETE FROM deposit_installments WHERE deposit_id IN (SELECT id FROM deposits WHERE lead_id = ?)').run(leadId);
+          db.prepare('DELETE FROM deposits WHERE lead_id = ?').run(leadId);
+          db.prepare('DELETE FROM leads WHERE id = ?').run(leadId);
+        }
+      })();
+      console.log(`✅ BULK DELETE successful`);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('Bulk Lead delete error:', error);
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.post('/api/leads/bulk-assign', (req, res) => {
@@ -719,104 +1047,107 @@ async function startServer() {
     db.prepare(`UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(status, req.params.id);
     res.json({ success: true });
   });
-  app.post('/api/otp/request', async (req, res) => {
-    try {
-      const { phone } = req.body;
-      if (!phone) throw new Error("شماره موبایل الزامی است");
-      
-      const mobileE164 = toE164Iran(phone);
-      
-      // MASTER CODE MODE (Temporary while SMS panel is down)
-      const code = "123456"; 
-      const expiresAt = new Date(Date.now() + 60 * 60000).toISOString(); // 1 hour expiry for convenience
-
-      db.prepare('INSERT OR REPLACE INTO otp_requests (phone, code, expires_at) VALUES (?, ?, ?)').run(String(phone), code, expiresAt);
-
-      // SMS sending logic
-      const apiKeyResult = db.prepare("SELECT value FROM settings WHERE key = 'sms_api_key'").get() as any;
-      const apiKey = apiKeyResult?.value?.trim();
-      
-      if (apiKey && apiKey !== "") {
-        const patternCodeResult = db.prepare("SELECT value FROM settings WHERE key = 'sms_pattern_code'").get() as any;
-        const patternCode = (patternCodeResult?.value || "otp_pattern").trim();
-        const senderResult = db.prepare("SELECT value FROM settings WHERE key = 'sms_sender'").get() as any;
-        const sender = senderResult?.value?.trim() || "3000505";
-        
-        const trySend = async (url: string, headers: any, data: any) => {
-          try {
-            const response = await axios.post(url, data, { 
-              headers: {
-                ...headers,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-              }, 
-              timeout: 15000 
-            });
-            return { success: true, url };
-          } catch (error: any) {
-            return { success: false, url, status: error.response?.status, message: error.message };
-          }
-        };
-
-        const edgeUrl = 'https://edge.ippanel.com/v1/sms/pattern/send';
-        const fallbacks = [
-          { url: 'https://api.ippanel.com/api/v1/sms/pattern/normal/send', headers: { 'Authorization': `AccessKey ${apiKey}` } },
-          { url: 'https://rest.ippanel.com/v1/messages/patterns/send', headers: { 'Authorization': `AccessKey ${apiKey}` } },
-          { url: 'https://api2.ippanel.com/api/v1/sms/pattern/normal/send', headers: { 'Authorization': `AccessKey ${apiKey}` } }
-        ];
-
-        // Attempt 1: Edge API (Newest)
-        let attempt = await trySend(
-          edgeUrl,
-          { 'Content-Type': 'application/json', 'Authorization': apiKey },
-          { code: patternCode, sender: sender, recipient: mobileE164, variable: { code } }
-        );
-
-        // Fallbacks
-        if (!attempt.success) {
-          console.warn(`⚠️ Edge API failed (${attempt.status}). Trying ${fallbacks.length} fallbacks...`);
-          for (const fb of fallbacks) {
-            // Wait 1 second between retries to be safer
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            const targetRecipient = fb.url.includes('rest.ippanel.com') ? mobileE164 : phone;
-            attempt = await trySend(
-              fb.url, 
-              fb.headers,
-              { recipient: targetRecipient, sender: sender, pattern_code: patternCode, variable: { code } }
-            );
-            if (attempt.success) {
-              console.log(`✅ SMS sent successfully via fallback: ${fb.url}`);
-              break;
-            }
-          }
-        }
-
-        if (attempt.success) {
-          console.log(`✨ OTP successfully delivered to ${mobileE164}`);
-        } else {
-          console.error(`❌ IPPANEL SERVICE OUTAGE (502/504). All 4 endpoints failed.`);
-          console.error(`This error comes from IPPanel servers. Please use the code below for testing.`);
-        }
-      } else {
-        console.log("ℹ️ No SMS API Key configured. SMS skipped.");
-      }
-      
-      // EXTREMELY VISIBLE OTP LOG (Perfect for testing during outages)
-      console.log("\n" + "█".repeat(60));
-      console.log(`█  🚀 DEBUG OTP FOR [ ${phone} ]`);
-      console.log(`█  👉 CODE:    [ ${code} ]`);
-      console.log(`█  (Use this code in the app if SMS is not received)`);
-      console.log("█".repeat(60) + "\n");
-      
-      res.json({ 
-        success: true, 
-        message: 'کد تایید (۱۲۳۴۵۶) به صورت موقت فعال شد. لطفاً از این کد برای ورود استفاده کنید.' 
-      });
-    } catch (e: any) {
-      console.error("Internal Request Error:", e.message);
-      res.status(400).json({ success: false, message: e.message || 'خطا در ارسال پیامک' });
+async function sendSMS(phone: string, message: string, patternCode?: string, variables?: any, isCampaign = false) {
+  try {
+    const prefix = isCampaign ? 'campaign_' : '';
+    
+    const apiKeyResult = db.prepare(`SELECT value FROM settings WHERE key = '${prefix}sms_api_key'`).get() as any;
+    let apiKey = apiKeyResult?.value?.trim();
+    
+    // Fallback to main if campaign not set
+    if (isCampaign && (!apiKey || apiKey === "")) {
+      const mainKey = db.prepare("SELECT value FROM settings WHERE key = 'sms_api_key'").get() as any;
+      apiKey = mainKey?.value?.trim();
     }
-  });
+
+    const senderResult = db.prepare(`SELECT value FROM settings WHERE key = '${prefix}sms_sender'`).get() as any;
+    let sender = senderResult?.value?.trim() || (isCampaign ? "" : "3000505");
+    if (isCampaign && !sender) {
+       const mainSender = db.prepare("SELECT value FROM settings WHERE key = 'sms_sender'").get() as any;
+       sender = mainSender?.value?.trim() || "3000505";
+    }
+
+    const isPatternResult = db.prepare(`SELECT value FROM settings WHERE key = '${prefix}sms_is_pattern'`).get() as any;
+    const isPattern = isPatternResult?.value === '1';
+
+    const smsUserResult = db.prepare(`SELECT value FROM settings WHERE key = '${prefix}sms_username'`).get() as any;
+    const smsPassResult = db.prepare(`SELECT value FROM settings WHERE key = '${prefix}sms_password'`).get() as any;
+    let username = smsUserResult?.value?.trim();
+    let password = smsPassResult?.value?.trim();
+
+    if (isCampaign && (!username || !password)) {
+       const mainUser = db.prepare("SELECT value FROM settings WHERE key = 'sms_username'").get() as any;
+       const mainPass = db.prepare("SELECT value FROM settings WHERE key = 'sms_password'").get() as any;
+       username = mainUser?.value?.trim();
+       password = mainPass?.value?.trim();
+    }
+
+    // 1. Try Method A: AccessKey (New API)
+    if (apiKey && apiKey !== "") {
+      if (isPattern && patternCode) {
+        await axios.post('https://api2.ippanel.com/api/v1/sms/pattern/normal/send', 
+          { recipient: phone, sender: sender, pattern_code: patternCode, variable: variables || {} },
+          { headers: { 'Authorization': `AccessKey ${apiKey}` }, timeout: 10000 }
+        );
+      } else {
+        await axios.post('https://api2.ippanel.com/api/v1/sms/send/panel/single', 
+          { recipients: [phone], sender: sender, message: message },
+          { headers: { 'Authorization': `AccessKey ${apiKey}` }, timeout: 10000 }
+        );
+      }
+      return { success: true };
+    }
+
+    // 2. Try Method B: WebService (Old API)
+    if (username && password) {
+      if (isPattern && patternCode) {
+        // Pattern sending via WebService URL (Legacy)
+        // Usually: webservice/from7direct.php
+        let url = `http://ippanel.com/webservice/from7direct.php?uname=${username}&pass=${password}&from=${sender}&to=${phone}&rcpt=${phone}&pid=${patternCode}`;
+        if (variables) {
+          Object.entries(variables).forEach(([k, v], i) => {
+            url += `&p${i+1}=${k}&v${i+1}=${encodeURIComponent(String(v))}`;
+          });
+        }
+        await axios.get(url, { timeout: 10000 });
+      } else {
+        // Simple message sending via WebService URL
+        await axios.get(`http://ippanel.com/class/sms/webservice/send_url.php?from=${sender}&to=${phone}&msg=${encodeURIComponent(message)}&uname=${username}&pass=${password}`, { timeout: 10000 });
+      }
+      return { success: true };
+    }
+
+    console.warn("[SMS] No credentials configured. Simulated Message:", message);
+    return { success: false, simulated: true };
+  } catch (err: any) {
+    console.error("[SMS Error]", err.response?.data || err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+app.post('/api/otp/request', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) throw new Error("شماره موبایل الزامی است");
+    
+    // Generate code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60000).toISOString();
+
+    db.prepare('INSERT OR REPLACE INTO otp_requests (phone, code, expires_at) VALUES (?, ?, ?)').run(String(phone), code, expiresAt);
+
+    // Get pattern for OTP
+    const patternCodeResult = db.prepare("SELECT value FROM settings WHERE key = 'sms_pattern_code'").get() as any;
+    const patternCode = (patternCodeResult?.value || "").trim();
+
+    await sendSMS(phone, `کد تایید شما: ${code}`, patternCode, { code });
+    
+    console.log(`[OTP] Code for ${phone}: ${code}`);
+    res.json({ success: true, message: 'کد تایید ارسال شد.' });
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e.message || 'خطا در ارسال پیامک' });
+  }
+});
 
   app.post('/api/otp/verify', (req, res) => {
     const { phone, code, name, surname, custom_data, requested_product_id } = req.body;
@@ -836,7 +1167,7 @@ async function startServer() {
     const existingLead = db.prepare('SELECT id, visit_count, expert FROM leads WHERE phone = ?').get(String(phone)) as any;
     
     let leadId = 0;
-    const finalCustomData = custom_data ? JSON.stringify(custom_data) : null;
+    const finalCustomData = custom_data ? (typeof custom_data === 'string' ? custom_data : JSON.stringify(custom_data)) : null;
     const prodId = requested_product_id ? Number(requested_product_id) : null;
 
     if (existingLead) {
@@ -848,22 +1179,11 @@ async function startServer() {
       leadId = Number(result.lastInsertRowid);
     }
 
-    // ROUND ROBIN ASSIGNMENT
-    const assignmentMode = db.prepare("SELECT value FROM settings WHERE key = 'lead_assignment_mode'").get() as any;
-    const isNewLead = !existingLead || !existingLead.expert;
-
-    if (assignmentMode?.value === 'round_robin' && isNewLead) {
-      const experts = db.prepare("SELECT username FROM users WHERE role = 'expert'").all() as any[];
-      if (experts.length > 0) {
-        const lastIdxRes = db.prepare("SELECT value FROM settings WHERE key = 'last_expert_idx'").get() as any;
-        let nextIdx = (parseInt(lastIdxRes?.value || '0') + 1) % experts.length;
-        const expert = experts[nextIdx].username;
-
-        db.prepare('UPDATE leads SET expert = ?, status = ? WHERE id = ?').run(expert, 'تخصیص داده شده', leadId);
-        db.prepare("UPDATE settings SET value = ? WHERE key = 'last_expert_idx'").run(String(nextIdx));
-        
+    if (!existingLead || !existingLead.expert) {
+      const expert = assignLead(leadId);
+      if (expert) {
         db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
-          .run(leadId, 1, 'note', `تخصیص خودکار (Round-Robin) به کارشناس: ${expert}`);
+          .run(leadId, 1, 'note', `ثبت نام جدید و تخصیص خودکار به: ${expert}`);
       }
     }
 
@@ -909,12 +1229,13 @@ async function startServer() {
   });
 
   app.post('/api/products', (req, res) => {
-    const { name, description, price, id } = req.body;
+    const { name, description, price, installments_enabled, id } = req.body;
+    const inst = installments_enabled ? 1 : 0;
     if (id) {
-      db.prepare('UPDATE products SET name = ?, description = ?, price = ? WHERE id = ?').run(name, description, price, id);
+      db.prepare('UPDATE products SET name = ?, description = ?, price = ?, installments_enabled = ? WHERE id = ?').run(name, description, price, inst, id);
       res.json({ success: true });
     } else {
-      const result = db.prepare('INSERT INTO products (name, description, price) VALUES (?, ?, ?)').run(name, description, price);
+      const result = db.prepare('INSERT INTO products (name, description, price, installments_enabled) VALUES (?, ?, ?, ?)').run(name, description, price, inst);
       res.json({ id: result.lastInsertRowid });
     }
   });
@@ -926,6 +1247,7 @@ async function startServer() {
         // Also clean up deposits associated with this product
         db.prepare('DELETE FROM deposit_installments WHERE deposit_id IN (SELECT id FROM deposits WHERE product_id = ?)').run(id);
         db.prepare('DELETE FROM deposits WHERE product_id = ?').run(id);
+        db.prepare('UPDATE leads SET requested_product_id = NULL WHERE requested_product_id = ?').run(id);
         db.prepare('DELETE FROM products WHERE id = ?').run(id);
       })();
       res.json({ success: true });
@@ -999,18 +1321,30 @@ async function startServer() {
 
   // Announcements API
   app.get('/api/announcements', (req, res) => {
-    const list = db.prepare(`
+    const { user_id } = req.query;
+    let query = `
       SELECT a.*, u.username as author_name 
       FROM announcements a 
       JOIN users u ON a.user_id = u.id 
-      ORDER BY a.created_at DESC LIMIT 50
-    `).all();
+    `;
+    let params: any[] = [];
+    
+    if (user_id) {
+      const user = db.prepare('SELECT role, team_id FROM users WHERE id = ?').get(Number(user_id)) as any;
+      if (user && user.role !== 'admin') {
+        query += ' WHERE (a.team_id IS NULL OR a.team_id = ?)';
+        params.push(user.team_id);
+      }
+    }
+    
+    query += ' ORDER BY a.created_at DESC LIMIT 50';
+    const list = db.prepare(query).all(...params);
     res.json(list);
   });
 
   app.post('/api/announcements', (req, res) => {
-    const { user_id, content } = req.body;
-    db.prepare('INSERT INTO announcements (user_id, content) VALUES (?, ?)').run(user_id, content);
+    const { user_id, team_id, content } = req.body;
+    db.prepare('INSERT INTO announcements (user_id, team_id, content) VALUES (?, ?, ?)').run(user_id, team_id || null, content);
     res.json({ success: true });
   });
 
@@ -1105,7 +1439,7 @@ async function startServer() {
   });
 
   app.get('/api/accounting/stats', (req, res) => {
-    const { expert_id } = req.query;
+    const { expert_id, supervisor_id } = req.query;
     
     let saleQuery = `SELECT SUM(amount) as total FROM deposits WHERE status = 'approved'`;
     let prodQuery = `
@@ -1122,7 +1456,25 @@ async function startServer() {
     `;
 
     const params: any[] = [];
-    if (expert_id) {
+    if (supervisor_id) {
+      const teamMates = db.prepare(`
+        SELECT id FROM users 
+        WHERE team_id = (SELECT team_id FROM users WHERE id = ?)
+      `).all(Number(supervisor_id)) as any[];
+      
+      if (teamMates.length > 0) {
+        const ids = teamMates.map(u => u.id);
+        const placeholders = ids.map(() => '?').join(',');
+        saleQuery += ` AND expert_id IN (${placeholders})`;
+        prodQuery += ` AND d.expert_id IN (${placeholders})`;
+        expertQuery += ` AND d.expert_id IN (${placeholders})`;
+        params.push(...ids);
+      } else {
+        saleQuery += ' AND 1=0';
+        prodQuery += ' AND 1=0';
+        expertQuery += ' AND 1=0';
+      }
+    } else if (expert_id) {
       saleQuery += ' AND expert_id = ?';
       prodQuery += ' AND d.expert_id = ?';
       expertQuery += ' AND d.expert_id = ?';
@@ -1178,6 +1530,21 @@ async function startServer() {
       try {
         let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
         template = await vite.transformIndexHtml(url, template);
+        
+        // Inject SEO settings
+        const settingsRes = db.prepare('SELECT key, value FROM settings WHERE key LIKE "seo%"').all() as any[];
+        const settings: any = settingsRes.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
+        
+        if (settings.seo_title) {
+          template = template.replace(/<title>.*?<\/title>/, `<title>${settings.seo_title}</title>`);
+        }
+        if (settings.seo_description) {
+          template = template.replace('</head>', `<meta name="description" content="${settings.seo_description}">\n</head>`);
+        }
+        if (settings.seo_keywords) {
+          template = template.replace('</head>', `<meta name="keywords" content="${settings.seo_keywords}">\n</head>`);
+        }
+
         res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
       } catch (e: any) {
         vite.ssrFixStacktrace(e);
@@ -1188,14 +1555,91 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      let template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+      
+      // Inject SEO settings for production too
+      const settingsRes = db.prepare('SELECT key, value FROM settings WHERE key LIKE "seo%"').all() as any[];
+      const settings: any = settingsRes.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
+      
+      if (settings.seo_title) {
+        template = template.replace(/<title>.*?<\/title>/, `<title>${settings.seo_title}</title>`);
+      }
+      if (settings.seo_description) {
+        template = template.replace('</head>', `<meta name="description" content="${settings.seo_description}">\n</head>`);
+      }
+      if (settings.seo_keywords) {
+        template = template.replace('</head>', `<meta name="keywords" content="${settings.seo_keywords}">\n</head>`);
+      }
+      
+      res.send(template);
     });
   }
+
+  // Custom Stats API
+  app.get('/api/custom-stats', (req, res) => {
+    const list = db.prepare('SELECT * FROM custom_stats ORDER BY order_index ASC').all();
+    res.json(list);
+  });
+
+  app.post('/api/custom-stats', (req, res) => {
+    const { title, count } = req.body;
+    db.prepare('INSERT INTO custom_stats (title, count) VALUES (?, ?)').run(title, count);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/custom-stats/:id', (req, res) => {
+    db.prepare('DELETE FROM custom_stats WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
 
   const PORT = 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Background Task: Auto Scheduled SMS
+  setInterval(async () => {
+    try {
+      const isEnabled = db.prepare("SELECT value FROM settings WHERE key = 'auto_sms_enabled'").get() as any;
+      if (isEnabled?.value !== '1') return;
+
+      const scheduledList = db.prepare('SELECT * FROM scheduled_sms WHERE is_active = 1').all() as any[];
+      
+      for (const sms of scheduledList) {
+        // Find leads created exactly X days ago who haven't received this SMS yet
+        let leadQuery = `
+          SELECT * FROM leads 
+          WHERE date(created_at, '+' || ? || ' days') = date('now')
+          AND id NOT IN (SELECT lead_id FROM lead_scheduled_sms_log WHERE sms_id = ?)
+        `;
+        if (sms.target === 'leads') {
+          leadQuery += " AND status != 'مشتری'";
+        }
+
+        const targetLeads = db.prepare(leadQuery).all(sms.send_after_days, sms.id) as any[];
+
+        for (const lead of targetLeads) {
+          const msg = sms.message.replace(/\{username\}|\{name\}/g, lead.name || 'کاربر');
+          const phone = lead.phone;
+          
+          try {
+            await sendSMS(phone, msg); // Note: Scheduled SMS usually uses standard text sending
+            
+            // Log in history
+            db.prepare('INSERT INTO lead_scheduled_sms_log (lead_id, sms_id) VALUES (?, ?)').run(lead.id, sms.id);
+            db.prepare('INSERT INTO lead_activities (lead_id, expert_id, type, content) VALUES (?, ?, ?, ?)')
+              .run(lead.id, 1, 'sms_sent', `پیامک سیستمی (${sms.title}): ${msg}`);
+              
+            console.log(`[AutoSMS] Sent "${sms.title}" to ${phone}`);
+          } catch (err: any) {
+            console.error(`[AutoSMS] Error sending to ${phone}:`, err.message);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error("[AutoSMS] Background task error:", e.message);
+    }
+  }, 1000 * 60 * 60 * 2); // Run every 2 hours
 }
 
 startServer();

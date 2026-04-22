@@ -6,6 +6,8 @@
 @theme {
   --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
   --font-dana: "Dana", "Vazirmatn", sans-serif;
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
 }
 
 @layer base {

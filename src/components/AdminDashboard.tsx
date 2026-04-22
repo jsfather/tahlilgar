@@ -5,11 +5,11 @@ import axios from 'axios';
 import { SettingsContext } from '../App';
 import { 
   Users, Settings as SettingsIcon, FileText, Download, MessageSquare, 
-  BarChart3, LogOut, Search, Trash2, DownloadCloud, Plus, X, Save,
+  BarChart3, LogOut, LogIn, Search, Trash2, DownloadCloud, Plus, X, Save,
   Eye, Monitor, Camera, Palette, ShieldCheck, TrendingUp, Globe, Menu,
   Clock, Lock, Shield, UserPlus, CheckCircle2, UserCircle2, Filter, AlertCircle,
-  Video, Image as ImageIcon, ExternalLink, Star, Phone, History, Calendar, Check, Send,
-  User as UserIcon, LifeBuoy, Paperclip, MessageCircle, ChevronLeft, RefreshCw
+  Video, Image as ImageIcon, ExternalLink, Star, Phone, History, Calendar, Check, Send, Bell,
+  User as UserIcon, LifeBuoy, Paperclip, MessageCircle, ChevronLeft, RefreshCw, Loader2
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Lead, Download as DownloadType, Stat, User, Testimonial, LeadActivity, FollowUp, SMSTemplate, Ticket, TicketMessage } from '../types';
@@ -25,13 +25,15 @@ import * as XLSX from 'xlsx';
 import jalaali from 'jalaali-js';
 
 const MENU_ITEMS = [
-  { id: 'stats', label: 'آمار و گزارشات', icon: BarChart3, roles: ['admin', 'expert'] },
-  { id: 'accounting', label: 'حسابداری و فیش‌ها', icon: ShieldCheck, roles: ['admin', 'expert'] },
-  { id: 'leads', label: 'بانک سرنخ‌ها', icon: Users, roles: ['admin', 'expert', 'editor'] },
-  { id: 'customers', label: 'مشتریان ما', icon: Users, roles: ['admin', 'expert'] },
+  { id: 'stats', label: 'آمار و گزارشات', icon: BarChart3, roles: ['admin', 'expert', 'supervisor', 'editor'] },
+  { id: 'accounting', label: 'حسابداری و فیش‌ها', icon: ShieldCheck, roles: ['admin', 'expert', 'supervisor'] },
+  { id: 'leads', label: 'بانک سرنخ‌ها', icon: Users, roles: ['admin', 'expert', 'supervisor', 'editor'] },
+  { id: 'teams', label: 'مدیریت تیم‌ها', icon: UserCircle2, roles: ['admin', 'supervisor'] },
+  { id: 'scheduled_sms', label: 'پیامک زمان‌بندی شده', icon: Clock, roles: ['admin'] },
+  { id: 'customers', label: 'مشتریان ما', icon: Users, roles: ['admin', 'expert', 'supervisor'] },
   { id: 'tasks', label: 'کارهای امروز', icon: Calendar, roles: ['expert'] },
-  { id: 'announcements', label: 'اعلان‌های سیستم', icon: AlertCircle, roles: ['admin', 'expert'] },
-  { id: 'tickets', label: 'پشتیبانی / تیکت', icon: LifeBuoy, roles: ['admin', 'expert'] },
+  { id: 'announcements', label: 'اعلان‌های سیستم', icon: Bell, roles: ['admin', 'expert', 'supervisor'] },
+  { id: 'tickets', label: 'پشتیبانی / تیکت', icon: LifeBuoy, roles: ['admin', 'expert', 'supervisor'] },
   { id: 'content', label: 'محتوای سایت', icon: FileText, roles: ['admin', 'editor'] },
   { id: 'products', label: 'محصولات و خدمات', icon: Star, roles: ['admin', 'editor'] },
   { id: 'fields', label: 'مدیریت فیلدها', icon: Filter, roles: ['admin'] },
@@ -40,7 +42,7 @@ const MENU_ITEMS = [
   { id: 'site_settings', label: 'تنظیمات سایت', icon: SettingsIcon, roles: ['admin'] },
   { id: 'sms', label: 'تنظیمات پیامک', icon: MessageSquare, roles: ['admin'] },
   { id: 'admins', label: 'دسترسی‌ها', icon: Shield, roles: ['admin'] },
-] as const;
+];
 
 export default function AdminDashboard() {
   const { settings, refreshSettings } = useContext(SettingsContext);
@@ -63,7 +65,16 @@ export default function AdminDashboard() {
   const [customFields, setCustomFields] = useState<any[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [deposits, setDeposits] = useState<any[]>([]);
+  const [customStats, setCustomStats] = useState<any[]>([]);
+  const [newCustomStat, setNewCustomStat] = useState({ title: '', count: '' });
   const [accountingStats, setAccountingStats] = useState({ totalSales: 0, productsSales: [], expertSales: [] });
+  const [teams, setTeams] = useState<any[]>([]);
+  const [scheduledSms, setScheduledSms] = useState<any[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
+  const [showUserProfile, setShowUserProfile] = useState(false);
+  const [selectedUserProfile, setSelectedUserProfile] = useState<any>(null);
+  const [newTeam, setNewTeam] = useState({ name: '', supervisor_id: 0, id: null as number | null });
+  const [newScheduledSms, setNewScheduledSms] = useState({ title: '', message: '', send_after_days: 1, target: 'leads', is_active: 1, id: null as number | null });
   const [newAnnouncement, setNewAnnouncement] = useState('');
   const [newProduct, setNewProduct] = useState({ name: '', description: '', price: '', id: null as number | null, installments_enabled: false });
   const [newField, setNewField] = useState({ name: '', label: '', type: 'text', target: 'registration', is_required: false, options: '', id: null as number | null });
@@ -123,13 +134,21 @@ export default function AdminDashboard() {
   const [showLeadDetails, setShowLeadDetails] = useState(false);
   const [reschedulingTask, setReschedulingTask] = useState<FollowUp | null>(null);
   const [newScheduleDate, setNewScheduleDate] = useState<DateObject | null>(null);
-  const [newAdmin, setNewAdmin] = useState<{id: number | null, username: string, password?: string, role: string, permissions: string[]}>({ 
-    id: null, username: '', password: '', role: 'expert', permissions: ['leads', 'tasks'] 
+  const [newAdmin, setNewAdmin] = useState<{id: number | null, username: string, password?: string, role: string, permissions: string[], team_id?: number | null}>({ 
+    id: null, username: '', password: '', role: 'expert', permissions: ['leads', 'tasks'], team_id: null 
   });
   const [newDownload, setNewDownload] = useState({ title: '', size: '', link: '' });
   const [newTestimonial, setNewTestimonial] = useState({ title: '', video_link: '', video_type: 'direct' as const, video_cover: '' });
   const [localSettings, setLocalSettings] = useState(settings);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Lead Creation States
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+  const [showBulkLeadModal, setShowBulkLeadModal] = useState(false);
+  const [newLeadForm, setNewLeadForm] = useState({ name: '', surname: '', phone: '', expert: '' });
+  const [bulkLeadParams, setBulkLeadParams] = useState({ assignment_mode: 'manual', expert: '' });
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
 
   useEffect(() => {
     setLocalSettings(settings);
@@ -152,16 +171,23 @@ export default function AdminDashboard() {
         const u = JSON.parse(auth);
         setCurrentUser(u);
         setIsLoggedIn(true);
+        axios.defaults.headers.common['x-user-id'] = u.id.toString();
       } catch (e) {
         localStorage.removeItem('adminAuth');
       }
     }
   }, []);
 
-  const fetchLeads = async () => {
+  const fetchLeads = async (customSearch?: string) => {
     try {
-      const expertFilter = currentUser?.role === 'expert' ? `&expert=${currentUser.username}` : '';
-      const res = await axios.get(`/api/leads?search=${search}${expertFilter}`);
+      const q = customSearch !== undefined ? customSearch : search;
+      let url = `/api/leads?search=${q}`;
+      if (currentUser?.role === 'expert') {
+        url += `&expert=${currentUser.username}`;
+      } else if (currentUser?.role === 'supervisor') {
+        url += `&supervisor_id=${currentUser.id}`;
+      }
+      const res = await axios.get(url);
       setLeads(Array.isArray(res.data) ? res.data : []);
     } catch (err) { console.error(err); }
   };
@@ -200,8 +226,9 @@ export default function AdminDashboard() {
 
   const fetchStats = async () => {
     try {
-      if (currentUser?.role === 'expert') {
-        const res = await axios.get(`/api/stats?expert_id=${currentUser.id}&username=${currentUser.username}`);
+      if (currentUser?.role === 'expert' || currentUser?.role === 'supervisor') {
+        const param = currentUser.role === 'supervisor' ? `supervisor_id=${currentUser.id}` : `expert_id=${currentUser.id}&username=${currentUser.username}`;
+        const res = await axios.get(`/api/stats?${param}`);
         const data = res.data;
         setStats([
           { label: 'کل لیدهای تخصیص یافته', value: data.totalLeads, icon: Users, color: 'blue' },
@@ -215,17 +242,36 @@ export default function AdminDashboard() {
     } catch (err) { console.error(err); }
   };
 
+  const fetchTeams = async () => {
+    try {
+      const res = await axios.get('/api/teams');
+      setTeams(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchScheduledSms = async () => {
+    try {
+      const res = await axios.get('/api/scheduled-sms');
+      setScheduledSms(res.data);
+    } catch (err) { console.error(err); }
+  };
+
   const fetchAnnouncements = async () => {
     try {
-      const res = await axios.get('/api/announcements');
+      const res = await axios.get(`/api/announcements?user_id=${currentUser?.id}`);
       setAnnouncements(Array.isArray(res.data) ? res.data : []);
     } catch (err) { console.error(err); }
   };
 
   const fetchAccountingStats = async () => {
     try {
-      const expertParam = currentUser?.role === 'expert' ? `?expert_id=${currentUser.id}` : '';
-      const res = await axios.get(`/api/accounting/stats${expertParam}`);
+      let url = '/api/accounting/stats';
+      if (currentUser?.role === 'expert') {
+        url += `?expert_id=${currentUser.id}`;
+      } else if (currentUser?.role === 'supervisor') {
+        url += `?supervisor_id=${currentUser.id}`;
+      }
+      const res = await axios.get(url);
       setAccountingStats(res.data);
     } catch (err) { console.error(err); }
   };
@@ -404,12 +450,20 @@ export default function AdminDashboard() {
         fetchAdmins();
       }
       if (activeTab === 'announcements') fetchAnnouncements();
+      if (activeTab === 'content') {
+        axios.get('/api/custom-stats').then(res => setCustomStats(res.data)).catch(console.error);
+      }
       if (activeTab === 'accounting') {
         fetchDeposits();
         fetchAccountingStats();
       }
     }
   }, [isLoggedIn, activeTab, search, currentUser]);
+
+  useEffect(() => {
+    setSearch('');
+    setSelectedLeads([]);
+  }, [activeTab]);
 
   useEffect(() => {
     const container = document.getElementById('chat-container');
@@ -423,34 +477,62 @@ export default function AdminDashboard() {
     try {
       const res = await axios.get('/api/admins');
       const allAdmins = res.data;
-      const found = allAdmins.find((a: any) => a.username === loginData.username && (loginData.password === 'admin123' || true)); // Backend should ideally check password
+      let userToLog = null;
       
-  // Simple logic since backend doesn't have secure login yet
-  if (loginData.username === 'admin' && loginData.password === 'admin123') {
-    const adminUser = { id: 1, username: 'admin', role: 'admin', permissions: JSON.stringify(MENU_ITEMS.map(m => m.id)) };
-    setCurrentUser(adminUser);
-    setIsLoggedIn(true);
-    localStorage.setItem('adminAuth', JSON.stringify(adminUser));
-    toast.success('خوش آمدید!');
-  } else {
-        // Find in other admins
+      if (loginData.username === 'admin' && loginData.password === 'admin123') {
+        userToLog = { id: 1, username: 'admin', role: 'admin', permissions: JSON.stringify(MENU_ITEMS.map(m => m.id)) };
+      } else {
         const staff = allAdmins.find((a: any) => a.username === loginData.username);
-        if (staff) {
-          // Password check normally here
-          setCurrentUser(staff);
-          setIsLoggedIn(true);
-          localStorage.setItem('adminAuth', JSON.stringify(staff));
-          toast.success(`خوش آمدید، ${staff.username}`);
-        } else {
-          toast.error('نام کاربری یا رمز عبور اشتباه است');
-        }
+        // In this demo we accept any password for other admins for simplicity as per previous code
+        if (staff) userToLog = staff;
+      }
+
+      if (userToLog) {
+        setCurrentUser(userToLog);
+        setIsLoggedIn(true);
+        localStorage.setItem('adminAuth', JSON.stringify(userToLog));
+        await axios.post('/api/auth/log', { user_id: userToLog.id, type: 'login' });
+        toast.success(`خوش آمدید، ${userToLog.username}`);
+      } else {
+        toast.error('نام کاربری یا رمز عبور اشتباه است');
       }
     } catch (e) {
       toast.error('خطا در برقراری ارتباط با سرور');
     }
   };
 
-  const handleLogout = () => {
+  useEffect(() => {
+    if (isLoggedIn && currentUser?.id) {
+       const beat = () => axios.post('/api/heartbeat', { userId: currentUser.id });
+       beat(); // initial
+       const interval = setInterval(beat, 60000);
+       return () => clearInterval(interval);
+    }
+  }, [isLoggedIn, currentUser]);
+
+  useEffect(() => {
+    if (activeTab === 'stats' && currentUser?.role === 'admin') {
+      const fetchOnline = () => axios.get('/api/online-users').then(res => setOnlineUsers(res.data));
+      fetchOnline();
+      const interval = setInterval(fetchOnline, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab, currentUser]);
+
+  const fetchUserProfile = async (id: number) => {
+    try {
+      const res = await axios.get(`/api/user-profile/${id}`);
+      setSelectedUserProfile(res.data);
+      setShowUserProfile(true);
+    } catch (err) {
+      toast.error('خطا در دریافت اطلاعات پروفایل');
+    }
+  };
+
+  const handleLogout = async () => {
+    if (currentUser) {
+       await axios.post('/api/auth/log', { user_id: currentUser.id, type: 'logout' });
+    }
     setIsLoggedIn(false);
     setCurrentUser(null);
     localStorage.removeItem('adminAuth');
@@ -483,6 +565,21 @@ export default function AdminDashboard() {
       const perms = JSON.parse(currentUser.permissions);
       return Array.isArray(perms) && perms.includes(tabId);
     } catch (e) { return false; }
+  };
+
+  const handleSaveCustomStat = async () => {
+    if(!newCustomStat.title || !newCustomStat.count) return;
+    await axios.post('/api/custom-stats', newCustomStat);
+    setNewCustomStat({ title: '', count: '' });
+    axios.get('/api/custom-stats').then(res => setCustomStats(res.data));
+    toast.success('آیتم جدید اضافه شد');
+  };
+
+  const handleDeleteCustomStat = async (id: number) => {
+    if(!confirm('آیا از حذف این مورد آمار مطمئن هستید؟')) return;
+    await axios.delete(`/api/custom-stats/${id}`);
+    axios.get('/api/custom-stats').then(res => setCustomStats(res.data));
+    toast.success('آیتم حذف شد');
   };
 
   const handleSaveSettings = async (directUpdates?: any) => {
@@ -525,6 +622,106 @@ export default function AdminDashboard() {
       console.error('Bulk delete error:', err);
       toast.error('خطا در حذف'); 
     }
+  };
+
+  const handleAddSingleLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLeadForm.phone) return toast.error('شماره موبایل الزامی است');
+    try {
+      await axios.post('/api/leads/create', newLeadForm);
+      toast.success('لید با موفقیت ثبت شد');
+      setShowAddLeadModal(false);
+      setNewLeadForm({ name: '', surname: '', phone: '', expert: '' });
+      fetchLeads();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'خطا در ثبت لید');
+    }
+  };
+
+  const handleBulkUpload = async () => {
+    if (!bulkFile) return toast.error('فایلی انتخاب نشده است');
+    setIsProcessingBulk(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', bulkFile);
+      formData.append('assignment_mode', bulkLeadParams.assignment_mode);
+      if (bulkLeadParams.assignment_mode === 'manual') {
+        formData.append('expert', bulkLeadParams.expert);
+      }
+
+      const res = await axios.post('/api/leads/bulk-upload', formData);
+      toast.success(`${res.data.count} لید با موفقیت وارد شد (${res.data.skipped} مورد تکراری یا ناقص رد شد)`);
+      setShowBulkLeadModal(false);
+      setBulkFile(null);
+      fetchLeads();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'خطا در آپلود');
+    } finally {
+      setIsProcessingBulk(false);
+    }
+  };
+
+  const handleSaveTeam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (newTeam.id) {
+        await axios.put(`/api/teams`, newTeam);
+        toast.success('تیم با موفقیت بروزرسانی شد');
+      } else {
+        await axios.post('/api/teams', newTeam);
+        toast.success('تیم جدید با موفقیت ثبت شد');
+      }
+      setNewTeam({ name: '', supervisor_id: 0, id: null });
+      fetchTeams();
+    } catch (err: any) { toast.error('خطا در ثبت تیم'); }
+  };
+
+  const handleDeleteTeam = async (id: number) => {
+    if (!window.confirm('آیا از حذف این تیم مطمئن هستید؟')) return;
+    try {
+      await axios.delete(`/api/teams/${id}`);
+      fetchTeams();
+      toast.success('تیم حذف شد');
+    } catch (err) { toast.error('خطا در حذف تیم'); }
+  };
+
+  const handleSaveScheduledSms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (newScheduledSms.id) {
+        await axios.put(`/api/scheduled-sms/${newScheduledSms.id}`, newScheduledSms);
+      } else {
+        await axios.post('/api/scheduled-sms', newScheduledSms);
+      }
+      toast.success('ذخیره شد');
+      setNewScheduledSms({ title: '', message: '', send_after_days: 1, target: 'leads', is_active: 1, id: null });
+      fetchScheduledSms();
+    } catch (err) { toast.error('خطا در ذخیره'); }
+  };
+
+  const handleDeleteScheduledSms = async (id: number) => {
+    if (!window.confirm('حذف شود؟')) return;
+    try {
+      await axios.delete(`/api/scheduled-sms/${id}`);
+      fetchScheduledSms();
+    } catch (err) { toast.error('خطا'); }
+  };
+
+  const isOnline = (lastActive?: string) => {
+    if (!lastActive) return false;
+    const diff = Date.now() - new Date(lastActive).getTime();
+    return diff < 5 * 60 * 1000; // 5 minutes
+  };
+
+  const downloadLeadTemplate = () => {
+    const data = [
+      { name: 'نام', surname: 'نام خانوادگی', phone: 'شماره موبایل' },
+      { name: 'مثال: علی', surname: 'رضایی', phone: '09121234567' }
+    ];
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "lead_template.xlsx");
   };
 
   const handleAddDownload = async () => {
@@ -964,25 +1161,304 @@ export default function AdminDashboard() {
                       <StatCard label="سرنخ‌های کل" value={leads.length} icon={ShieldCheck} color="amber" />
                       <StatCard label="پیگیری‌های باز" value={followups.length} icon={Calendar} color="purple" />
                     </div>
-                    <div className="h-[300px] md:h-[400px] w-full bg-gray-50 rounded-2xl p-2 md:p-4 border border-gray-100">
-                      <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2">
-                        <BarChart3 size={20} className="text-blue-500" />
-                        نمودار بازدید ۳۰ روز اخیر
-                      </h3>
-                      <div className="w-full h-[250px] md:h-full">
-                        <ResponsiveContainer width="100%" height="90%">
-                          <LineChart data={(stats as any).timeline || []}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
-                            <XAxis dataKey="date" stroke="#999" fontSize={10} tickMargin={10} />
-                            <YAxis stroke="#999" fontSize={10} tickMargin={10} />
-                            <Tooltip contentStyle={{ borderRadius: '15px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', direction: 'rtl' }} />
-                            <Line type="monotone" dataKey="visits" stroke="#2563eb" strokeWidth={3} dot={{ fill: '#2563eb', strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
+                    <div className="grid lg:grid-cols-3 gap-8">
+                       <div className="lg:col-span-2 h-[300px] md:h-[400px] w-full bg-gray-50 rounded-2xl p-2 md:p-4 border border-gray-100">
+                         <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2">
+                           <BarChart3 size={20} className="text-blue-500" />
+                           نمودار بازدید ۳۰ روز اخیر
+                         </h3>
+                         <div className="w-full h-[250px] md:h-full">
+                           <ResponsiveContainer width="100%" height="90%">
+                             <LineChart data={(stats as any).timeline || []}>
+                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                               <XAxis dataKey="date" stroke="#999" fontSize={10} tickMargin={10} />
+                               <YAxis stroke="#999" fontSize={10} tickMargin={10} />
+                               <Tooltip contentStyle={{ borderRadius: '15px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', direction: 'rtl' }} />
+                               <Line type="monotone" dataKey="visits" stroke="#2563eb" strokeWidth={3} dot={{ fill: '#2563eb', strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} />
+                             </LineChart>
+                           </ResponsiveContainer>
+                         </div>
+                       </div>
+                       
+                       <div className="bg-white border border-gray-100 rounded-3xl p-6 shadow-sm overflow-hidden flex flex-col h-[400px]">
+                          <h3 className="text-sm font-black mb-4 flex items-center gap-2 text-gray-700">
+                             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+                             افراد آنلاین در سیستم
+                          </h3>
+                          <div className="divide-y divide-gray-50 overflow-y-auto pr-2 custom-scrollbar">
+                             {onlineUsers.map(u => (
+                               <div key={u.id} className="py-3 flex items-center justify-between group">
+                                  <div className="flex items-center gap-3">
+                                     <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-500 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
+                                        <UserIcon size={18} />
+                                     </div>
+                                     <div>
+                                        <p className="text-sm font-bold text-gray-900">{u.username}</p>
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase">{u.role}</p>
+                                     </div>
+                                  </div>
+                                  <button onClick={() => fetchUserProfile(u.id)} className="p-2 text-gray-300 hover:text-blue-500 transition-colors">
+                                     <ChevronLeft size={20} />
+                                  </button>
+                               </div>
+                             ))}
+                             {onlineUsers.length === 0 && <p className="text-center py-10 text-gray-300 text-xs font-bold">هیچ کاربری آنلاین نیست</p>}
+                          </div>
+                       </div>
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'teams' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-8">
+                  <h3 className="text-xl font-black mb-6 flex items-center gap-2">
+                    <UserCircle2 size={24} className="text-blue-600" />
+                    مدیریت تیم‌ها و کارشناسان
+                  </h3>
+                  <form onSubmit={handleSaveTeam} className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 bg-gray-50 p-6 rounded-2xl">
+                    <div>
+                      <label className="block text-xs font-black text-gray-400 mb-2">نام تیم</label>
+                      <input 
+                        type="text" 
+                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                        value={newTeam.name}
+                        onChange={e => setNewTeam({...newTeam, name: e.target.value})}
+                        placeholder="مثلاً: تیم فروش شمال"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-black text-gray-400 mb-2">سرپرست تیم</label>
+                      <select 
+                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                        value={newTeam.supervisor_id}
+                        onChange={e => setNewTeam({...newTeam, supervisor_id: Number(e.target.value)})}
+                      >
+                        <option value={0}>انتخاب سرپرست...</option>
+                        {admins.filter(a => a.role === 'supervisor' || a.role === 'admin').map(a => (
+                          <option key={a.id} value={a.id}>{a.username}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <button type="submit" className="w-full bg-blue-600 text-white font-black py-3 rounded-xl shadow-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
+                        <Plus size={20} />
+                        <span>{newTeam.id ? 'بروزرسانی تیم' : 'ایجاد تیم جدید'}</span>
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {teams.map(team => (
+                      <div key={team.id} className="border border-gray-100 rounded-2xl p-6 hover:shadow-md transition-all group">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h4 className="font-black text-lg text-gray-900">{team.name}</h4>
+                            <p className="text-xs text-blue-600 font-bold mt-1">سرپرست: {team.supervisor_name || 'نامشخص'}</p>
+                          </div>
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                            <button onClick={() => setNewTeam(team)} className="p-2 text-gray-400 hover:text-blue-500"><Palette size={18} /></button>
+                            <button onClick={() => handleDeleteTeam(team.id)} className="p-2 text-gray-400 hover:text-red-500"><Trash2 size={18} /></button>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">اعضای تیم</p>
+                          <div className="flex flex-wrap gap-2">
+                            {admins.filter(a => a.team_id === team.id).map(member => (
+                              <div key={member.id} className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 group/member relative">
+                                <div className={`w-2 h-2 rounded-full ${isOnline(member.last_active_at) ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-gray-300'}`} />
+                                <span className="text-[11px] font-bold text-gray-600">{member.username}</span>
+                                <button onClick={() => fetchUserProfile(member.id)} className="p-1 text-gray-400 hover:text-blue-500 transition-colors opacity-0 group-hover/member:opacity-100"><Eye size={12} /></button>
+                              </div>
+                            ))}
+                            {admins.filter(a => a.team_id === team.id).length === 0 && (
+                              <p className="text-xs text-gray-300 italic">بدون عضو</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'scheduled_sms' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-4 sm:p-8">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                     <h3 className="text-xl font-black flex items-center gap-2">
+                        <Clock size={24} className="text-blue-600" />
+                        پیامک‌های زمان‌بندی شده خودکار
+                     </h3>
+                     <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-xl w-full sm:w-auto">
+                        <span className="text-[10px] font-bold text-gray-500">وضعیت کل سیستم:</span>
+                        <button 
+                          onClick={() => handleSaveSettings({ auto_sms_enabled: settings.auto_sms_enabled === '1' ? '0' : '1' })}
+                          className={`flex-1 sm:flex-none px-4 py-1 rounded-lg text-[10px] font-black transition-all ${settings.auto_sms_enabled === '1' ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-500'}`}
+                        >
+                          {settings.auto_sms_enabled === '1' ? 'فعال' : 'غیرفعال'}
+                        </button>
+                     </div>
+                  </div>
+
+                  <div className="bg-white rounded-[2rem] p-4 sm:p-8 border border-gray-100 shadow-xl space-y-8 mb-8">
+                     <div className="flex items-center gap-4 border-b border-gray-100 pb-4">
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+                           <SettingsIcon size={24} />
+                        </div>
+                        <div>
+                           <h3 className="text-xl font-black text-gray-900">تنظیمات وب‌سرویس پیامک خودکار</h3>
+                           <p className="text-xs text-gray-400 font-bold">بصورت جداگانه از پیامک‌های عادی (کمپین و زماندار)</p>
+                        </div>
+                     </div>
+                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-400 mr-2 uppercase">نام کاربری (Uname)</label>
+                           <input 
+                              className="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-bold text-sm"
+                              value={localSettings.campaign_sms_username || ''}
+                              onChange={e => setLocalSettings({...localSettings, campaign_sms_username: e.target.value})}
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-400 mr-2 uppercase">رمز عبور (Pass)</label>
+                           <input 
+                              type="password"
+                              className="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-bold text-sm"
+                              value={localSettings.campaign_sms_password || ''}
+                              onChange={e => setLocalSettings({...localSettings, campaign_sms_password: e.target.value})}
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-400 mr-2 uppercase">شماره فرستنده</label>
+                           <input 
+                              className="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-bold text-sm"
+                              value={localSettings.campaign_sms_sender || ''}
+                              onChange={e => setLocalSettings({...localSettings, campaign_sms_sender: e.target.value})}
+                           />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-400 mr-2 uppercase">API Key (AccessKey)</label>
+                           <input 
+                              className="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-bold text-sm"
+                              value={localSettings.campaign_sms_api_key || ''}
+                              onChange={e => setLocalSettings({...localSettings, campaign_sms_api_key: e.target.value})}
+                           />
+                        </div>
+                     </div>
+                     <button 
+                       onClick={() => handleSaveSettings({
+                         campaign_sms_username: localSettings.campaign_sms_username,
+                         campaign_sms_password: localSettings.campaign_sms_password,
+                         campaign_sms_sender: localSettings.campaign_sms_sender,
+                         campaign_sms_api_key: localSettings.campaign_sms_api_key
+                       })}
+                       className="w-full sm:w-auto bg-gray-900 text-white px-10 py-4 rounded-2xl font-black shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                     >
+                       <Save size={18} />
+                       ذخیره تنظیمات اختصاصی پنل خودکار
+                     </button>
+                  </div>
+
+                  <form onSubmit={handleSaveScheduledSms} className="bg-gray-50 p-4 sm:p-8 rounded-3xl border border-gray-100 space-y-6 mb-12">
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-400">عنوان پیامک</label>
+                           <input 
+                            type="text" 
+                            className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                            value={newScheduledSms.title}
+                            onChange={e => setNewScheduledSms({...newScheduledSms, title: e.target.value})}
+                            placeholder="مثلاً: خوش‌آمدگویی روز دوم"
+                           />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400">ارسال پس از (روز)</label>
+                              <input 
+                               type="number" 
+                               className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                               value={newScheduledSms.send_after_days}
+                               onChange={e => setNewScheduledSms({...newScheduledSms, send_after_days: Number(e.target.value)})}
+                              />
+                           </div>
+                           <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400">هدف ارسال</label>
+                              <select 
+                                className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                                value={newScheduledSms.target}
+                                onChange={e => setNewScheduledSms({...newScheduledSms, target: e.target.value})}
+                              >
+                                 <option value="leads">فقط لیدها</option>
+                                 <option value="all">همه (لید + مشتری)</option>
+                              </select>
+                           </div>
+                        </div>
+                     </div>
+                     <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                           <label className="text-[10px] font-black text-gray-400">متن پیامک</label>
+                           <span className="text-[9px] text-blue-500 font-bold">متغیرها: {'{name}'}</span>
+                        </div>
+                        <textarea 
+                          className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold min-h-[120px]"
+                          value={newScheduledSms.message}
+                          onChange={e => setNewScheduledSms({...newScheduledSms, message: e.target.value})}
+                          placeholder="سلام {name} عزیز..."
+                        />
+                     </div>
+                     <button type="submit" className="w-full bg-blue-600 text-white font-black py-4 rounded-xl shadow-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
+                        <Save size={18} />
+                        <span>ذخیره تنظیمات پیامک خودکار</span>
+                     </button>
+                  </form>
+
+                  <div className="space-y-4">
+                     <h4 className="text-sm font-black text-gray-700 mb-4 px-2">لیست پیامک‌های زمان‌بندی شده</h4>
+                     <div className="grid grid-cols-1 gap-4">
+                        {scheduledSms.map(sms => (
+                          <div key={sms.id} className="bg-white border border-gray-100 p-4 sm:p-6 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 sm:gap-6 group hover:border-blue-200 transition-all shadow-sm">
+                             <div className="flex-1 space-y-3 w-full">
+                                <div className="flex items-center gap-3">
+                                   <div className="shrink-0 w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                                      <Clock size={20} />
+                                   </div>
+                                   <div className="flex-grow min-w-0">
+                                      <h5 className="font-black text-gray-900 text-sm sm:text-base truncate">{sms.title}</h5>
+                                      <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">بعد از {sms.send_after_days} روز - هدف: {sms.target === 'leads' ? 'لیدها' : 'همه'}</p>
+                                   </div>
+                                </div>
+                                <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 p-3 sm:p-4 rounded-xl border border-gray-50 w-full break-words font-medium">{sms.message}</p>
+                             </div>
+                             <div className="flex items-center justify-between md:justify-end gap-4 sm:gap-6 w-full md:w-auto md:border-r md:border-gray-100 md:pr-6 pt-4 md:pt-0 border-t md:border-t-0 border-gray-50">
+                                <div className="flex flex-col items-start md:items-start gap-1">
+                                   <span className="text-[10px] font-black text-gray-400">وضعیت فعلی</span>
+                                   <button 
+                                      onClick={() => {
+                                        const newVal = sms.is_active ? 0 : 1;
+                                        axios.put(`/api/scheduled-sms/${sms.id}`, { ...sms, is_active: newVal }).then(() => fetchScheduledSms());
+                                      }}
+                                      className={`px-3 py-1.5 rounded-lg text-[9px] font-black transition-all shadow-sm ${sms.is_active ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}
+                                   >
+                                      {sms.is_active ? 'فعال سیستم' : 'متوقف شده'}
+                                   </button>
+                                </div>
+                                <div className="flex gap-2">
+                                   <button onClick={() => setNewScheduledSms(sms)} className="p-2 sm:p-3 bg-gray-50 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all" title="ویرایش"><Palette size={20} /></button>
+                                   <button onClick={() => handleDeleteScheduledSms(sms.id)} className="p-2 sm:p-3 bg-gray-50 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="حذف"><Trash2 size={20} /></button>
+                                </div>
+                             </div>
+                          </div>
+                        ))}
+                        {scheduledSms.length === 0 && (
+                          <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 font-bold">هیچ پیامک زمان‌بندی شده‌ای تعریف نشده است.</div>
+                        )}
+                     </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1233,6 +1709,18 @@ export default function AdminDashboard() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    {(currentUser?.role === 'admin' || currentUser?.role === 'editor') && (
+                      <>
+                        <button onClick={() => setShowAddLeadModal(true)} className="flex-1 md:flex-none justify-center bg-gray-50 text-gray-600 border border-gray-200 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-100 text-sm">
+                          <UserPlus size={18} />
+                          <span>افزودن تکی</span>
+                        </button>
+                        <button onClick={() => setShowBulkLeadModal(true)} className="flex-1 md:flex-none justify-center bg-gray-50 text-gray-600 border border-gray-200 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-100 text-sm">
+                          <Plus size={18} />
+                          <span>افزودن دسته‌جمعی</span>
+                        </button>
+                      </>
+                    )}
                     {selectedLeads.length > 0 && currentUser?.role === 'admin' && (
                       <>
                         <button onClick={() => setShowAssignModal(true)} className="bg-blue-50 text-blue-600 border border-blue-200 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-100 text-sm">
@@ -1245,27 +1733,142 @@ export default function AdminDashboard() {
                         </button>
                       </>
                     )}
-                    <button onClick={() => setShowExportModal(true)} className="flex-1 md:flex-none justify-center bg-blue-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20">
-                      <DownloadCloud size={18} />
-                      <span>خروجی CSV</span>
-                    </button>
+                    {(currentUser?.role === 'admin' || currentUser?.role === 'editor') && (
+                      <button onClick={() => setShowExportModal(true)} className="flex-1 md:flex-none justify-center bg-blue-600 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20">
+                        <DownloadCloud size={18} />
+                        <span>خروجی CSV</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                <div className="overflow-x-auto border border-gray-100 dark:border-gray-700 rounded-2xl">
-                  <table className="w-full text-right min-w-[800px]">
-                    <thead className="bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 text-xs uppercase">
-                      <tr>
-                        <th className="p-4"><input type="checkbox" onChange={(e) => e.target.checked ? setSelectedLeads(leads.map(l => l.id)) : setSelectedLeads([])} /></th>
-                        <th className="p-4 font-black">نام و نام خانوادگی</th>
-                        <th className="p-4 font-black">شماره موبایل</th>
-                        <th className="p-4 font-black">وضعیت</th>
-                        <th className="p-4 font-black">تعداد ورود</th>
-                        <th className="p-4 font-black">کارشناس</th>
-                        <th className="p-4 font-black">تاریخ ثبت</th>
-                        <th className="p-4 font-black">عملیات</th>
-                      </tr>
-                    </thead>
+                <div className="md:border md:border-gray-100 dark:md:border-gray-700 md:rounded-2xl overflow-hidden">
+                  {/* Desktop Table View */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-right min-w-[800px]">
+                      <thead className="bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 text-xs uppercase">
+                        <tr>
+                          <th className="p-4"><input type="checkbox" onChange={(e) => e.target.checked ? setSelectedLeads(leads.map(l => l.id)) : setSelectedLeads([])} /></th>
+                          <th className="p-4 font-black">نام و نام خانوادگی</th>
+                          <th className="p-4 font-black">شماره موبایل</th>
+                          <th className="p-4 font-black">وضعیت</th>
+                          <th className="p-4 font-black text-center">تعداد ورود</th>
+                          <th className="p-4 font-black">کارشناس</th>
+                          <th className="p-4 font-black">تاریخ ثبت</th>
+                          <th className="p-4 font-black text-center">عملیات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {Array.isArray(leads) && leads.map(lead => (
+                          <tr key={lead.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/50 transition-colors">
+                            <td className="p-4"><input type="checkbox" checked={selectedLeads.includes(lead.id)} onChange={(e) => e.target.checked ? setSelectedLeads([...selectedLeads, lead.id]) : setSelectedLeads(selectedLeads.filter(id => id !== lead.id))} /></td>
+                            <td className="p-4 font-bold dark:text-gray-200">{lead.name} {lead.surname}</td>
+                            <td className="p-4 text-gray-600 dark:text-gray-400 font-mono text-sm">{lead.phone}</td>
+                            <td className="p-4">
+                              <span className={`text-[10px] font-black px-2.5 py-1 rounded-full ${
+                                lead.status === 'مشتری' ? 'bg-green-100 text-green-600' :
+                                lead.status === 'تخصیص داده شده' ? 'bg-blue-100 text-blue-600' :
+                                'bg-amber-100 text-amber-600'
+                              }`}>
+                                {lead.status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                                {lead.visit_count || 1}
+                              </span>
+                            </td>
+                            <td className="p-4 text-gray-500 dark:text-gray-400 text-sm font-bold">{lead.expert || '-'}</td>
+                            <td className="p-4 text-gray-400 text-[10px]" dir="ltr">{new Date(lead.created_at).toLocaleString('fa-IR')}</td>
+                            <td className="p-4 flex items-center justify-center gap-1">
+                               <button 
+                                onClick={() => fetchDetails(lead.id)}
+                                className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl transition-all flex items-center gap-1.5 text-[10px] font-black"
+                                title="مشاهده پروفایل و پیگیری"
+                               >
+                                  <UserCircle2 size={16} />
+                                  <span>پروفایل</span>
+                               </button>
+                               {currentUser?.role === 'admin' && (
+                                 <button onClick={() => handleDeleteLead(lead.id)} className="p-2 text-red-400 hover:text-red-600 transition-colors" title="حذف">
+                                   <Trash2 size={18} />
+                                 </button>
+                               )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Card View */}
+                  <div className="md:hidden space-y-4">
+                    {Array.isArray(leads) && leads.map(lead => (
+                      <div key={lead.id} className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-sm">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-3">
+                            <input type="checkbox" checked={selectedLeads.includes(lead.id)} onChange={(e) => e.target.checked ? setSelectedLeads([...selectedLeads, lead.id]) : setSelectedLeads(selectedLeads.filter(id => id !== lead.id))} />
+                            <div>
+                               <h4 className="font-black text-gray-900 dark:text-white text-sm">{lead.name} {lead.surname}</h4>
+                               <p className="text-[10px] text-gray-400 font-bold mt-0.5 font-mono" dir="ltr">{lead.phone}</p>
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-black px-2 py-1 rounded-full ${
+                             lead.status === 'مشتری' ? 'bg-green-100 text-green-600' :
+                             lead.status === 'تخصیص داده شده' ? 'bg-blue-100 text-blue-600' :
+                             'bg-amber-100 text-amber-600'
+                          }`}>
+                            {lead.status}
+                          </span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3 text-[10px] font-bold border-t border-gray-50 dark:border-gray-800 pt-3">
+                           <div className="text-gray-400">کارشناس: <span className="text-gray-700 dark:text-gray-300">{lead.expert || '-'}</span></div>
+                           <div className="text-gray-400">دفعات ورود: <span className="text-gray-700 dark:text-gray-300">{lead.visit_count || 1}</span></div>
+                           <div className="text-gray-400 col-span-2">تاریخ ثبت: <span className="text-gray-700 dark:text-gray-300 font-mono" dir="ltr">{new Date(lead.created_at).toLocaleString('fa-IR')}</span></div>
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                           <button 
+                            onClick={() => fetchDetails(lead.id)}
+                            className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                           >
+                              <UserCircle2 size={16} />
+                              <span>مشاهده پروفایل</span>
+                           </button>
+                           {currentUser?.role === 'admin' && (
+                             <button onClick={() => handleDeleteLead(lead.id)} className="shrink-0 aspect-square bg-red-50 text-red-500 flex items-center justify-center rounded-xl hover:bg-red-100 transition-all active:scale-95">
+                               <Trash2 size={18} />
+                             </button>
+                           )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {leads.length === 0 && <div className="p-20 text-center text-gray-400 font-bold bg-gray-50 dark:bg-gray-900/50">موردی یافت نشد.</div>}
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden md:block overflow-x-auto">
+                   <table className="w-full text-right border-collapse">
+                     <thead>
+                       <tr className="border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] uppercase tracking-widest text-gray-400">
+                         <th className="p-4 w-10 text-center">
+                            <input type="checkbox" onChange={(e) => {
+                               if (e.target.checked) setSelectedLeads(leads.map(l => l.id));
+                               else setSelectedLeads([]);
+                            }} checked={leads.length > 0 && selectedLeads.length === leads.length} />
+                         </th>
+                         <th className="p-4 font-black">نام و نام خانوادگی</th>
+                         <th className="p-4 font-black">تلفن/موبایل</th>
+                         <th className="p-4 font-black">وضعیت</th>
+                         <th className="p-4 font-black text-center">ورود</th>
+                         <th className="p-4 font-black">کارشناس</th>
+                         <th className="p-4 font-black">تاریخ ثبت</th>
+                         <th className="p-4 font-black text-center">عملیات</th>
+                       </tr>
+                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                       {Array.isArray(leads) && leads.map(lead => (
                         <tr key={lead.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/50 transition-colors">
@@ -1313,15 +1916,61 @@ export default function AdminDashboard() {
             )}
 
             {activeTab === 'content' && (
-              <div className="grid gap-8">
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">
+                <Section title="مدیریت کارت‌های آمار (فرصت‌ها)" icon={LineChart}>
+                   <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                         <div className="space-y-1">
+                            <label className="text-xs font-bold text-gray-400 mr-2">عنوان کارت</label>
+                            <input 
+                               value={newCustomStat.title} 
+                               onChange={e => setNewCustomStat({...newCustomStat, title: e.target.value})}
+                               className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 outline-none"
+                               placeholder="مثلاً: پروژه‌های موفق"
+                            />
+                         </div>
+                         <div className="space-y-1">
+                            <label className="text-xs font-bold text-gray-400 mr-2">عدد یا مقدار</label>
+                            <input 
+                               value={newCustomStat.count} 
+                               onChange={e => setNewCustomStat({...newCustomStat, count: e.target.value})}
+                               className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 outline-none"
+                               placeholder="مثلاً: ۱۲۰۰"
+                            />
+                         </div>
+                         <button 
+                           onClick={handleSaveCustomStat}
+                           className="bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20"
+                         >
+                           افزودن کارت جدید
+                         </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                         {Array.isArray(customStats) && customStats.map(cs => (
+                           <div key={cs.id} className="bg-gray-50 border border-gray-100 p-5 rounded-2xl relative group">
+                              <p className="text-2xl font-black text-blue-600">{cs.count}</p>
+                              <p className="text-xs font-bold text-gray-500">{cs.title}</p>
+                              <button 
+                                onClick={() => handleDeleteCustomStat(cs.id)}
+                                className="absolute top-2 left-2 p-1.5 text-red-400 hover:text-red-600 hover:bg-white rounded-lg transition-all opacity-0 group-hover:opacity-100 shadow-sm"
+                              >
+                                <X size={14} />
+                              </button>
+                           </div>
+                         ))}
+                      </div>
+                   </div>
+                </Section>
+
                 <div className="grid lg:grid-cols-2 gap-8">
                   <Section title="تنظیمات هدر و فوتر" icon={Palette}>
-                    <Input label="لوگو سایت (لینک)" value={localSettings.header_logo} onChange={(v: string) => setLocalSettings({...localSettings, header_logo: v})} />
+                    <ImageUploadInput label="لوگو سایت (لینک)" value={localSettings.header_logo} onChange={(v: string) => setLocalSettings({...localSettings, header_logo: v})} />
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-gray-700">متن فوتر</label>
                       <textarea
                         className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-none"
-                        value={localSettings.footer_text}
+                        value={localSettings.footer_text || ''}
                         onChange={e => setLocalSettings({...localSettings, footer_text: e.target.value})}
                       />
                     </div>
@@ -1338,7 +1987,7 @@ export default function AdminDashboard() {
                         <label className="text-sm font-bold text-gray-700">عنوان کلان</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] resize-none"
-                          value={localSettings.main_title}
+                          value={localSettings.main_title || ''}
                           onChange={e => setLocalSettings({...localSettings, main_title: e.target.value})}
                         />
                       </div>
@@ -1346,7 +1995,7 @@ export default function AdminDashboard() {
                         <label className="text-sm font-bold text-gray-700">متن اعلان قرعه‌کشی</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] resize-none"
-                          value={localSettings.lottery_info}
+                          value={localSettings.lottery_info || ''}
                           onChange={e => setLocalSettings({...localSettings, lottery_info: e.target.value})}
                         />
                       </div>
@@ -1354,7 +2003,7 @@ export default function AdminDashboard() {
                         <label className="text-sm font-bold text-gray-700">متن فراخوان مشارکت</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] resize-none"
-                          value={localSettings.participation_text}
+                          value={localSettings.participation_text || ''}
                           onChange={e => setLocalSettings({...localSettings, participation_text: e.target.value})}
                         />
                       </div>
@@ -1364,7 +2013,7 @@ export default function AdminDashboard() {
                         <label className="text-sm font-bold text-gray-700">توضیحات بخش آمار</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] resize-none"
-                          value={localSettings.stats_description}
+                          value={localSettings.stats_description || ''}
                           onChange={e => setLocalSettings({...localSettings, stats_description: e.target.value})}
                         />
                       </div>
@@ -1375,12 +2024,12 @@ export default function AdminDashboard() {
                 <Section title="تنظیمات فرم ثبت‌نام" icon={UserPlus}>
                   <div className="grid lg:grid-cols-2 gap-8">
                     <div className="space-y-4">
-                      <Input label="لینک آواتار پروفایل" value={localSettings.form_avatar} onChange={(v: string) => setLocalSettings({...localSettings, form_avatar: v})} />
+                    <ImageUploadInput label="لینک آواتار پروفایل" value={localSettings.form_avatar} onChange={(v: string) => setLocalSettings({...localSettings, form_avatar: v})} />
                       <div className="space-y-2">
                         <label className="text-sm font-bold text-gray-700">عنوان فرم</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] resize-none"
-                          value={localSettings.form_title}
+                          value={localSettings.form_title || ''}
                           onChange={e => setLocalSettings({...localSettings, form_title: e.target.value})}
                         />
                       </div>
@@ -1388,7 +2037,7 @@ export default function AdminDashboard() {
                         <label className="text-sm font-bold text-gray-700">توضیحات فرم</label>
                         <textarea
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 min-h-[120px] resize-none"
-                          value={localSettings.form_description}
+                          value={localSettings.form_description || ''}
                           onChange={e => setLocalSettings({...localSettings, form_description: e.target.value})}
                         />
                       </div>
@@ -1434,7 +2083,7 @@ export default function AdminDashboard() {
                           <option value="0">عدم نمایش بنر</option>
                         </select>
                       </div>
-                      <Input label="لینک تصویر بنر" value={localSettings.bottom_banner_image} onChange={(v: string) => setLocalSettings({...localSettings, bottom_banner_image: v})} />
+                      <ImageUploadInput label="لینک تصویر بنر" value={localSettings.bottom_banner_image} onChange={(v: string) => setLocalSettings({...localSettings, bottom_banner_image: v})} />
                       <Input label="لینک مقصد بنر" value={localSettings.bottom_banner_link} onChange={(v: string) => setLocalSettings({...localSettings, bottom_banner_link: v})} />
                    </div>
                 </Section>
@@ -1458,6 +2107,38 @@ export default function AdminDashboard() {
                       </div>
 
                       <div className="bg-gray-50 p-6 rounded-2xl space-y-4">
+                        <label className="block text-sm font-black text-gray-700">وضعیت نمایش ویدیو (حالت بدون تایمر)</label>
+                        <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-100">
+                           <input 
+                             type="checkbox" 
+                             id="video_no_timer"
+                             className="w-5 h-5 rounded text-blue-600"
+                             checked={localSettings.video_no_timer === '1'}
+                             onChange={e => setLocalSettings({...localSettings, video_no_timer: e.target.checked ? '1' : '0'})}
+                           />
+                           <label htmlFor="video_no_timer" className="text-xs font-bold text-gray-500 cursor-pointer">آیا ویدیو "بدون انتظار" نمایش داده شود؟ (حالت غیر تایمری)</label>
+                        </div>
+                        
+                        <div className="pt-4 border-t border-gray-100 mt-2 space-y-4">
+                           <h4 className="font-black text-gray-900 text-sm flex items-center gap-2">
+                              <ImageIcon size={18} className="text-emerald-500" />
+                              تصویر بنر اختصاصی ویدیو
+                           </h4>
+                           <div className="flex items-center gap-3">
+                              <input 
+                                type="checkbox" 
+                                id="video_banner_enabled"
+                                className="w-5 h-5 rounded text-emerald-600"
+                                checked={localSettings.video_banner_enabled === '1'}
+                                onChange={e => setLocalSettings({...localSettings, video_banner_enabled: e.target.checked ? '1' : '0'})}
+                              />
+                              <label htmlFor="video_banner_enabled" className="text-[10px] font-bold text-gray-500 cursor-pointer">نمایش بنر بالای ویدیو فعال باشد؟</label>
+                           </div>
+                           <ImageUploadInput label="لینک عکس بنر ویدیو" value={localSettings.video_banner_image} onChange={(v: string) => setLocalSettings({...localSettings, video_banner_image: v})} />
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-50 p-6 rounded-2xl space-y-4">
                         <label className="block text-sm font-bold text-gray-700">نوع تایمر نمایشی</label>
                         <select 
                           className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none"
@@ -1468,6 +2149,45 @@ export default function AdminDashboard() {
                           <option value="webinar">تایمر شروع وبینار</option>
                         </select>
                         <Input label="عنوان تایمر" value={localSettings.timer_title} onChange={(v: string) => setLocalSettings({...localSettings, timer_title: v})} />
+                        
+                        <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-100">
+                          <input 
+                            type="checkbox" 
+                            className="w-5 h-5 rounded text-blue-600"
+                            checked={localSettings.show_timer === '1'}
+                            onChange={e => setLocalSettings({...localSettings, show_timer: e.target.checked ? '1' : '0'})}
+                          />
+                          <span className="text-sm font-bold text-gray-700">نمایش تایمر در سایت فعال باشد؟ (حالت بدون تایمر)</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-emerald-50 p-6 rounded-2xl space-y-4 border border-emerald-100">
+                        <h4 className="font-black text-emerald-900 text-sm mb-2 flex items-center gap-2">
+                           <ImageIcon size={18} />
+                           بنر بالای ویدیو (Top Banner)
+                        </h4>
+                        <div className="flex items-center gap-3 mb-4">
+                           <input 
+                             type="checkbox" 
+                             className="w-5 h-5 rounded text-emerald-600"
+                             checked={localSettings.top_banner_enabled === '1'}
+                             onChange={e => setLocalSettings({...localSettings, top_banner_enabled: e.target.checked ? '1' : '0'})}
+                           />
+                           <span className="text-xs font-bold text-emerald-800">نمایش بنر بالای ویدیو فعال باشد؟</span>
+                        </div>
+                        <ImageUploadInput label="لینک عکس بنر" value={localSettings.top_banner_image} onChange={(v: string) => setLocalSettings({...localSettings, top_banner_image: v})} />
+                        <p className="text-[10px] text-emerald-600 font-bold">این بنر دقیقاً بالای بخش ویدیو در لندینگ نمایش داده می‌شود.</p>
+                      </div>
+
+                      <div className="bg-purple-50 p-6 rounded-2xl space-y-4 border border-purple-100">
+                         <h4 className="font-black text-purple-900 text-sm mb-2 flex items-center gap-2">
+                            <Palette size={18} />
+                            ظاهر فرم ثبت‌نام نهایی
+                         </h4>
+                         <div className="grid grid-cols-1 gap-4">
+                            <Input label="رنگ پس‌زمینه (HEX)" value={localSettings.registration_bg_color} onChange={(v: string) => setLocalSettings({...localSettings, registration_bg_color: v})} />
+                            <ImageUploadInput label="لینک عکس پس‌زمینه (اختیاری)" value={localSettings.registration_bg_image} onChange={(v: string) => setLocalSettings({...localSettings, registration_bg_image: v})} />
+                         </div>
                       </div>
                     </div>
 
@@ -1483,7 +2203,7 @@ export default function AdminDashboard() {
                           <option value="aparat">سرویس آپارات</option>
                         </select>
                         <Input label={localSettings.video_type === 'direct' ? "لینک ویدیو" : "شناسه آپارات"} value={localSettings.video_link} onChange={(v: string) => setLocalSettings({...localSettings, video_link: v})} />
-                        <Input label="کاور ویدیو (Image URL)" value={localSettings.video_cover} onChange={(v: string) => setLocalSettings({...localSettings, video_cover: v})} />
+                        <ImageUploadInput label="کاور ویدیو (Image URL)" value={localSettings.video_cover} onChange={(v: string) => setLocalSettings({...localSettings, video_cover: v})} />
                       </div>
 
                       <div className="bg-blue-50 p-6 rounded-2xl space-y-4 border border-blue-100">
@@ -1761,6 +2481,19 @@ export default function AdminDashboard() {
             )}
             {activeTab === 'downloads' && (
               <div className="space-y-8">
+                <Section title="تنظیمات بخش دانلودها" icon={SettingsIcon}>
+                   <div className="flex flex-col md:flex-row gap-4 items-end">
+                      <Input label="عنوان بخش دانلود" value={localSettings.download_box_title} onChange={v => setLocalSettings({...localSettings, download_box_title: v})} />
+                      <button 
+                        onClick={() => handleSaveSettings()}
+                        className="bg-emerald-600 text-white font-bold px-8 py-3 rounded-xl hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                      >
+                        <Save size={20} />
+                        <span>ذخیره عنوان</span>
+                      </button>
+                   </div>
+                </Section>
+
                 <Section title="افزودن فایل جدید" icon={Plus}>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:items-end">
                     <Input label="عنوان فایل" value={newDownload.title} onChange={v => setNewDownload({...newDownload, title: v})} />
@@ -1805,24 +2538,26 @@ export default function AdminDashboard() {
                       />
                     </div>
                     <div className="flex items-center gap-3">
-                      <button 
-                        onClick={() => {
-                          const customerData = leads.filter(l => l.status === 'مشتری');
-                          exportToExcel(customerData.map(c => ({
-                            'نام': c.name,
-                            'نام خانوادگی': c.surname,
-                            'تلفن': c.phone,
-                            'شهر': c.city || '',
-                            'کارشناس': c.expert || '',
-                            'تاریخ ثبت': new Date(c.created_at).toLocaleDateString('fa-IR'),
-                            'محصول': products.find(p => p.id === c.requested_product_id)?.name || ''
-                          })), 'Customers_List');
-                        }}
-                        className="flex items-center gap-2 bg-emerald-600 text-white px-6 py-4 rounded-2xl font-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 transition-all font-dana"
-                      >
-                         <DownloadCloud size={18} />
-                         <span className="text-xs">خروجی اکسل مشتریان</span>
-                      </button>
+                      {(currentUser?.role === 'admin' || currentUser?.role === 'editor') && (
+                        <button 
+                          onClick={() => {
+                            const customerData = leads.filter(l => l.status === 'مشتری');
+                            exportToExcel(customerData.map(c => ({
+                              'نام': c.name,
+                              'نام خانوادگی': c.surname,
+                              'تلفن': c.phone,
+                              'شهر': c.city || '',
+                              'کارشناس': c.expert || '',
+                              'تاریخ ثبت': new Date(c.created_at).toLocaleDateString('fa-IR'),
+                              'محصول': products.find(p => p.id === c.requested_product_id)?.name || ''
+                            })), 'Customers_List');
+                          }}
+                          className="flex items-center gap-2 bg-emerald-600 text-white px-6 py-4 rounded-2xl font-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 transition-all font-dana"
+                        >
+                           <DownloadCloud size={18} />
+                           <span className="text-xs">خروجی اکسل مشتریان</span>
+                        </button>
+                      )}
                       <button 
                         onClick={fetchLeads} 
                         className="w-14 h-14 bg-blue-600 text-white flex items-center justify-center rounded-2xl shadow-lg shadow-blue-500/30 hover:rotate-180 transition-all duration-500"
@@ -1832,58 +2567,103 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right border-separate border-spacing-y-2">
-                       <thead>
-                         <tr className="text-gray-400 text-[10px] md:text-sm font-black uppercase tracking-widest">
-                           <th className="py-4 pr-4">نام مشتری</th>
-                           <th className="py-4">اطلاعات تماس</th>
-                           <th className="py-4">کارشناس پیگیری</th>
-                           <th className="py-4">محصول خریداری شده</th>
-                           <th className="py-4">تاریخ ثبت</th>
-                           <th className="pl-4 py-4 text-center">پروفایل</th>
-                         </tr>
-                       </thead>
-                       <tbody className="text-sm">
-                         {leads.filter(l => l.status === 'مشتری').map(lead => (
-                           <tr key={lead.id} className="bg-white hover:bg-blue-50/30 transition-all border-y border-gray-100">
-                             <td className="py-6 pr-4 rounded-r-2xl border-y border-r border-gray-50">
-                               <div className="flex items-center gap-3">
-                                 <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center font-black shadow-sm">
-                                   <ShieldCheck size={24} />
-                                 </div>
-                                 <div className="flex flex-col">
-                                   <span className="font-black text-gray-900 text-lg">{lead.name} {lead.surname}</span>
-                                   <span className="text-[10px] text-emerald-500 font-dana font-black">ACTIVE CUSTOMER</span>
-                                 </div>
-                               </div>
-                             </td>
-                             <td className="py-4 border-y border-gray-50">
-                               <div className="font-mono text-sm font-bold text-gray-700" dir="ltr">{lead.phone}</div>
-                             </td>
-                             <td className="py-4 border-y border-gray-50 font-bold text-gray-500">
-                                {lead.expert}
-                             </td>
-                             <td className="py-4 border-y border-gray-50">
-                               <div className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg inline-block text-xs font-black">
-                                 {products.find(p => p.id === lead.requested_product_id)?.name || 'سایر'}
-                               </div>
-                             </td>
-                             <td className="py-4 border-y border-gray-50 text-xs font-medium text-gray-400">
-                               {new Date(lead.created_at).toLocaleDateString('fa-IR')}
-                             </td>
-                             <td className="pl-4 py-4 rounded-l-2xl border-y border-l border-gray-50 text-left">
-                               <button 
-                                 onClick={() => fetchDetails(lead.id)}
-                                 className="p-3 bg-white border border-gray-100 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all"
-                               >
-                                  <Eye size={18} />
-                               </button>
-                             </td>
+                  <div className="md:border md:border-gray-50 md:rounded-3xl overflow-hidden">
+                    {/* Desktop Table */}
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full text-right border-separate border-spacing-y-2">
+                         <thead>
+                           <tr className="text-gray-400 text-sm font-black uppercase tracking-widest">
+                             <th className="py-4 pr-4">نام مشتری</th>
+                             <th className="py-4">اطلاعات تماس</th>
+                             <th className="py-4">کارشناس پیگیری</th>
+                             <th className="py-4">محصول خریداری شده</th>
+                             <th className="py-4">تاریخ ثبت</th>
+                             <th className="pl-4 py-4 text-center">پروفایل</th>
                            </tr>
-                         ))}
-                       </tbody>
-                    </table>
+                         </thead>
+                         <tbody className="text-sm">
+                           {leads.filter(l => l.status === 'مشتری').map(lead => (
+                             <tr key={lead.id} className="bg-white hover:bg-blue-50/30 transition-all border-y border-gray-100">
+                               <td className="py-6 pr-4 rounded-r-2xl border-y border-r border-gray-50">
+                                 <div className="flex items-center gap-3">
+                                   <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center font-black shadow-sm">
+                                     <ShieldCheck size={24} />
+                                   </div>
+                                   <div className="flex flex-col">
+                                     <span className="font-black text-gray-900 text-lg">{lead.name} {lead.surname}</span>
+                                     <span className="text-[10px] text-emerald-500 font-dana font-black">ACTIVE CUSTOMER</span>
+                                   </div>
+                                 </div>
+                               </td>
+                               <td className="py-4 border-y border-gray-50">
+                                 <div className="font-mono text-sm font-bold text-gray-700" dir="ltr">{lead.phone}</div>
+                               </td>
+                               <td className="py-4 border-y border-gray-50 font-bold text-gray-500">
+                                  {lead.expert}
+                               </td>
+                               <td className="py-4 border-y border-gray-50">
+                                 <div className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg inline-block text-xs font-black">
+                                   {products.find(p => p.id === lead.requested_product_id)?.name || 'سایر'}
+                                 </div>
+                               </td>
+                               <td className="py-4 border-y border-gray-50 text-xs font-medium text-gray-400">
+                                 {new Date(lead.created_at).toLocaleDateString('fa-IR')}
+                               </td>
+                               <td className="pl-4 py-4 rounded-l-2xl border-y border-l border-gray-50 text-left">
+                                 <button 
+                                   onClick={() => fetchDetails(lead.id)}
+                                   className="p-3 bg-white border border-gray-100 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                                 >
+                                    <Eye size={18} />
+                                 </button>
+                               </td>
+                             </tr>
+                           ))}
+                         </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile Cards */}
+                    <div className="md:hidden space-y-4">
+                      {leads.filter(l => l.status === 'مشتری').map(lead => (
+                        <div key={lead.id} className="bg-white dark:bg-gray-900 p-5 rounded-3xl border border-gray-100 dark:border-gray-800 space-y-4 shadow-xl shadow-gray-200/20">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center font-black">
+                              <ShieldCheck size={28} />
+                            </div>
+                            <div>
+                               <h4 className="font-black text-gray-900 dark:text-white text-base">{lead.name} {lead.surname}</h4>
+                               <p className="text-[11px] text-emerald-500 font-black">ACTIVE CUSTOMER</p>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 text-[11px] font-bold bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl">
+                             <div>
+                               <p className="text-gray-400 mb-1">شماره تماس</p>
+                               <p className="text-gray-900 dark:text-gray-200 font-mono" dir="ltr">{lead.phone}</p>
+                             </div>
+                             <div>
+                               <p className="text-gray-400 mb-1">کارشناس</p>
+                               <p className="text-gray-900 dark:text-gray-200">{lead.expert || '-'}</p>
+                             </div>
+                             <div className="col-span-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                               <p className="text-gray-400 mb-1">محصول خریداری شده</p>
+                               <span className="text-blue-600 dark:text-blue-400 font-black">
+                                 {products.find(p => p.id === lead.requested_product_id)?.name || 'سایر'}
+                               </span>
+                             </div>
+                          </div>
+
+                          <button 
+                            onClick={() => fetchDetails(lead.id)}
+                            className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/30 active:scale-95 transition-all"
+                          >
+                             <Eye size={18} />
+                             <span>مشاهده کامل پروفایل مشتری</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2102,7 +2882,7 @@ export default function AdminDashboard() {
                            <label className="block text-sm font-bold text-gray-700">توضیحات متا (Description)</label>
                            <textarea 
                              className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-500 text-sm h-32"
-                             value={localSettings.seo_description}
+                             value={localSettings.seo_description || ''}
                              onChange={e => setLocalSettings({...localSettings, seo_description: e.target.value})}
                            />
                         </div>
@@ -2124,7 +2904,7 @@ export default function AdminDashboard() {
                     </h3>
                     <div className="grid md:grid-cols-2 gap-6">
                        <Input label="نام برند / مجموعه" value={localSettings.site_title} onChange={(v: string) => setLocalSettings({...localSettings, site_title: v})} />
-                       <Input label="فاویکون (لینک تصویر)" value={localSettings.favicon_url} onChange={(v: string) => setLocalSettings({...localSettings, favicon_url: v})} />
+                       <ImageUploadInput label="فاویکون (لینک تصویر)" value={localSettings.favicon_url} onChange={(v: string) => setLocalSettings({...localSettings, favicon_url: v})} />
                     </div>
                     <button onClick={() => handleSaveSettings()} className="mt-6 bg-gray-900 text-white px-10 py-4 rounded-xl font-black hover:bg-black transition-all">
                        ذخیره نهایی تمامی تنظیمات
@@ -2135,11 +2915,49 @@ export default function AdminDashboard() {
 
             {activeTab === 'sms' && (
               <div className="grid lg:grid-cols-2 gap-8">
-                <Section title="تنظیمات پنل پیامک" icon={SettingsIcon}>
-                  <Input label="Webservice API Key" value={localSettings.sms_api_key} onChange={(v: string) => setLocalSettings({...localSettings, sms_api_key: v})} />
-                  <Input label="شماره ارسال کننده" value={localSettings.sms_sender} onChange={(v: string) => setLocalSettings({...localSettings, sms_sender: v})} />
-                  <Input label="کد الگوی OTP (IPPanel)" value={localSettings.sms_pattern_code} onChange={(v: string) => setLocalSettings({...localSettings, sms_pattern_code: v})} />
-                </Section>
+                <div className="space-y-8">
+                  <Section title="تنظیمات پنل پیامک (OTP & Notification)" icon={ShieldCheck}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="space-y-4">
+                          <Input label="نام کاربری پنل" value={localSettings.sms_username} onChange={(v: string) => setLocalSettings({...localSettings, sms_username: v})} />
+                          <Input label="رمز عبور پنل" type="password" value={localSettings.sms_password} onChange={(v: string) => setLocalSettings({...localSettings, sms_password: v})} />
+                          <Input label="شماره فرستنده" value={localSettings.sms_sender} onChange={(v: string) => setLocalSettings({...localSettings, sms_sender: v})} />
+                       </div>
+                       <div className="space-y-4">
+                          <Input label="کلید API جدید" value={localSettings.sms_api_key} onChange={(v: string) => setLocalSettings({...localSettings, sms_api_key: v})} />
+                          <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">متد ارسال اصلی</label>
+                            <select className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none" value={localSettings.sms_is_pattern} onChange={e => setLocalSettings({...localSettings, sms_is_pattern: e.target.value})}>
+                              <option value="1">Pattern Code (کد الگو)</option>
+                              <option value="0">Normal Text (متن عادی)</option>
+                            </select>
+                          </div>
+                          <Input label="کد الگوی OTP" value={localSettings.sms_pattern_code} onChange={(v: string) => setLocalSettings({...localSettings, sms_pattern_code: v})} />
+                       </div>
+                    </div>
+                  </Section>
+
+                  <Section title="تنظیمات پیامک‌های انبوه و خودکار (Campaign SMS)" icon={TrendingUp}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="space-y-4">
+                          <Input label="نام کاربری اختصاصی" value={localSettings.campaign_sms_username} onChange={(v: string) => setLocalSettings({...localSettings, campaign_sms_username: v})} />
+                          <Input label="رمز عبور اختصاصی" type="password" value={localSettings.campaign_sms_password} onChange={(v: string) => setLocalSettings({...localSettings, campaign_sms_password: v})} />
+                       </div>
+                       <div className="space-y-4">
+                          <Input label="کلید API اختصاصی" value={localSettings.campaign_sms_api_key} onChange={(v: string) => setLocalSettings({...localSettings, campaign_sms_api_key: v})} />
+                          <Input label="شماره فرستنده تبلیغاتی" value={localSettings.campaign_sms_sender} onChange={(v: string) => setLocalSettings({...localSettings, campaign_sms_sender: v})} />
+                       </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-bold mt-4">نکته: سیستم پیامک‌های زمان‌بندی شده از این تنظیمات استفاده می‌کند. در صورت خالی بودن، از تنظیمات اصلی استفاده می‌شود.</p>
+                  </Section>
+
+                  <div className="flex justify-center">
+                    <button onClick={() => handleSaveSettings()} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-3">
+                       <Save size={20} />
+                       <span>ذخیره تمامی تنظیمات پنل</span>
+                    </button>
+                  </div>
+                </div>
                 
                 <div className="space-y-8">
                   <Section title="افزودن قالب پیامک جدید" icon={Plus}>
@@ -2215,43 +3033,76 @@ export default function AdminDashboard() {
             )}
 
             {activeTab === 'admins' && (
-              <div className="grid lg:grid-cols-2 gap-8">
+              <div className="grid lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-4">
                 <Section title="افزودن مدیر یا کارشناس جدید" icon={UserPlus}>
-                  <form onSubmit={handleSaveAdmin} className="space-y-4">
-                    <Input label="نام کاربری" value={newAdmin.username} onChange={(v: string) => setNewAdmin({...newAdmin, username: v})} />
-                    <Input label="رمز عبور" type="password" value={newAdmin.password} onChange={(v: string) => setNewAdmin({...newAdmin, password: v})} />
+                  <form onSubmit={handleSaveAdmin} className="bg-white p-8 rounded-[2rem] border border-gray-100 shadow-xl space-y-6">
+                    <div className="space-y-1">
+                      <Input 
+                        label="نام کاربری (ID کاربری - انگلیسی)" 
+                        value={newAdmin.username} 
+                        dir="ltr"
+                        onChange={(v: string) => {
+                          const clean = v.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+                          setNewAdmin({...newAdmin, username: clean});
+                        }} 
+                        placeholder="example_user"
+                      />
+                      <p className="text-[10px] text-gray-400 font-bold mr-2">فقط حروف انگلیسی، اعداد و خط تیره (_)</p>
+                    </div>
+                    <Input label="رمز عبور" type="password" value={newAdmin.password || ''} onChange={(v: string) => setNewAdmin({...newAdmin, password: v})} />
                     
-                    <div className="bg-gray-50 p-6 rounded-2xl space-y-2">
-                      <label className="block text-sm font-black text-gray-700 mb-2">نوع حساب کاربری</label>
-                      <select 
-                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
-                        value={newAdmin.role}
-                        onChange={(e) => {
-                          const role = e.target.value;
-                          let perms = ['leads', 'tasks'];
-                          if (role === 'admin') perms = MENU_ITEMS.map(m => m.id);
-                          if (role === 'editor') perms = ['content', 'testimonials', 'downloads', 'site_settings'];
-                          setNewAdmin({...newAdmin, role, permissions: perms});
-                        }}
-                      >
-                         <option value="expert">کارشناس فروش (CRM)</option>
-                         <option value="admin">مدیر کل (دسترسی کامل)</option>
-                         <option value="editor">ویرایشگر محتوا</option>
-                      </select>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-black text-gray-700 mb-2">نوع حساب کاربری</label>
+                        <select 
+                          className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                          value={newAdmin.role}
+                          onChange={(e) => {
+                            const role = e.target.value;
+                            let perms = ['leads', 'tasks'];
+                            if (role === 'admin') perms = MENU_ITEMS.map(m => m.id);
+                            if (role === 'editor') perms = ['content', 'testimonials', 'downloads', 'site_settings'];
+                            if (role === 'supervisor') perms = ['leads', 'teams', 'stats', 'accounting', 'announcements'];
+                            setNewAdmin({...newAdmin, role, permissions: perms});
+                          }}
+                        >
+                           <option value="expert">کارشناس فروش (CRM)</option>
+                           <option value="supervisor">سرپرست تیم فروش</option>
+                           <option value="admin">مدیر کل (دسترسی کامل)</option>
+                           <option value="editor">ویرایشگر محتوا</option>
+                        </select>
+                      </div>
+
+                      {(newAdmin.role === 'expert' || newAdmin.role === 'supervisor') && (
+                        <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                          <label className="block text-sm font-black text-gray-700 mb-2">تخصیص به تیم</label>
+                          <select 
+                            className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
+                            value={newAdmin.team_id || ''}
+                            onChange={(e) => setNewAdmin({...newAdmin, team_id: e.target.value ? Number(e.target.value) : null})}
+                          >
+                             <option value="">بدون تیم</option>
+                             {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        </div>
+                      )}
                     </div>
                     
-                    <div className="bg-gray-50 p-6 rounded-2xl space-y-4">
-                      <label className="block text-sm font-black text-gray-700 mb-2">تعیین سطح دسترسی</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="bg-gray-50 p-4 sm:p-6 rounded-2xl space-y-4">
+                      <label className="block text-sm font-black text-gray-700 mb-2">تعیین سطح دسترسی کاربر</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                         {MENU_ITEMS.map(item => (
-                          <label key={item.id} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 cursor-pointer hover:border-blue-500 transition-all">
-                            <input 
-                              type="checkbox" 
-                              className="w-4 h-4 rounded text-blue-600"
-                              checked={newAdmin.permissions.includes(item.id)}
-                              onChange={() => togglePermission(item.id)}
-                            />
-                            <span className="text-xs font-bold text-gray-600">{item.label}</span>
+                          <label key={item.id} className={`flex items-center gap-3 bg-white p-3 rounded-xl border cursor-pointer hover:border-blue-500 transition-all ${newAdmin.permissions.includes(item.id) ? 'border-blue-500 ring-2 ring-blue-500/5' : 'border-gray-100'}`}>
+                            <div className="relative flex items-center">
+                              <input 
+                                type="checkbox" 
+                                className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-gray-300 checked:bg-blue-600 checked:border-blue-600 transition-all"
+                                checked={newAdmin.permissions.includes(item.id)}
+                                onChange={() => togglePermission(item.id)}
+                              />
+                              <Check className="absolute h-3.5 w-3.5 text-white pointer-events-none opacity-0 peer-checked:opacity-100 left-1/2 -translate-x-1/2" />
+                            </div>
+                            <span className={`text-[10px] font-black transition-colors ${newAdmin.permissions.includes(item.id) ? 'text-blue-600' : 'text-gray-500'}`}>{item.label}</span>
                           </label>
                         ))}
                       </div>
@@ -2259,36 +3110,71 @@ export default function AdminDashboard() {
                     
                     <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2">
                        <Save size={20} />
-                       ثبت و ذخیره
+                       {newAdmin.id ? 'بروزرسانی کاربر' : 'ثبت و ایجاد کاربر'}
                     </button>
                   </form>
                 </Section>
-                <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-8 space-y-6">
-                  <h3 className="text-lg font-black flex items-center gap-2">
-                    <ShieldCheck size={24} className="text-blue-600" />
-                    لیست مدیران و کارشناسان
-                  </h3>
-                  <div className="space-y-4">
+                <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-4 sm:p-8 space-y-6">
+                  <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-lg font-black flex items-center gap-2">
+                        <ShieldCheck size={24} className="text-blue-600" />
+                        مدیران و کارشناسان
+                     </h3>
+                     <button onClick={fetchAdmins} className="p-2 text-gray-400 hover:text-blue-600 transition-all"><RefreshCw size={18} /></button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {admins.map(admin => (
-                      <div key={admin.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
-                        <div>
-                          <p className="font-black text-gray-900">{admin.username}</p>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {(() => {
-                              try {
-                                const perms = JSON.parse(admin.permissions);
-                                return Array.isArray(perms) && perms.map((p: string) => (
-                                  <span key={p} className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-md font-bold">
-                                    {MENU_ITEMS.find(m => m.id === p)?.label}
-                                  </span>
-                                ));
-                              } catch (e) { return null; }
-                            })()}
-                          </div>
+                      <div key={admin.id} className="p-5 bg-gray-50 rounded-3xl border border-transparent hover:border-blue-200 transition-all group flex flex-col justify-between h-full">
+                        <div className="flex items-start justify-between mb-4">
+                           <div className="flex items-center gap-3">
+                              <div className="relative">
+                                 <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-gray-300 border border-gray-100">
+                                    <UserCircle2 size={24} />
+                                 </div>
+                                 <div className={`absolute -top-1 -right-1 w-4 h-4 border-2 border-white rounded-full ${isOnline(admin.last_active_at) ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-gray-300'}`} />
+                              </div>
+                              <div>
+                                 <p className="font-black text-gray-900 text-sm">
+                                   {admin.username}
+                                 </p>
+                                 <span className="text-[8px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-md font-bold uppercase">{admin.role}</span>
+                              </div>
+                           </div>
+                           <div className="flex gap-1">
+                              <button onClick={() => fetchUserProfile(admin.id)} className="p-2 text-gray-400 hover:text-blue-500 transition-all"><Eye size={16} /></button>
+                           </div>
                         </div>
-                        <button onClick={() => handleDeleteAdmin(admin.id)} className="p-2 text-red-400 hover:text-red-700 transition-colors">
-                          <Trash2 size={18} />
-                        </button>
+
+                        <div className="space-y-2 mb-4">
+                           {admin.team_id && (
+                              <p className="text-[10px] text-blue-600 font-bold flex items-center gap-1">
+                                 <Users size={12} />
+                                 تیم: {teams.find(t => t.id === admin.team_id)?.name}
+                              </p>
+                           )}
+                           <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1">
+                              <Clock size={12} />
+                              بازدید: {admin.last_active_at ? new Date(admin.last_active_at).toLocaleTimeString('fa-IR') : 'نامشخص'}
+                           </p>
+                        </div>
+
+                        <div className="flex gap-2 pt-4 border-t border-gray-100">
+                           <button 
+                             onClick={() => {
+                               const p = Array.isArray(JSON.parse(admin.permissions)) ? JSON.parse(admin.permissions) : [];
+                               setNewAdmin({...admin, password: '', permissions: p});
+                             }} 
+                             className="flex-1 py-2 bg-white text-blue-600 border border-blue-50 rounded-xl text-xs font-bold hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                           >
+                             ویرایش
+                           </button>
+                           <button 
+                             onClick={() => handleDeleteAdmin(admin.id)} 
+                             className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"
+                           >
+                             <Trash2 size={16} />
+                           </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2419,6 +3305,150 @@ export default function AdminDashboard() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Single Lead Modal */}
+      <AnimatePresence>
+        {showAddLeadModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="bg-white rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl">
+              <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                    <UserPlus size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-gray-900">افزودن سرنخ جدید</h3>
+                    <p className="text-xs text-gray-400 font-bold mt-1">ثبت اطلاعات به صورت تکی</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowAddLeadModal(false)} className="p-2 hover:bg-white rounded-xl transition-all"><X size={24} /></button>
+              </div>
+              <form onSubmit={handleAddSingleLead} className="p-8 space-y-6 text-right" dir="rtl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input label="نام" value={newLeadForm.name} onChange={(v: string) => setNewLeadForm({...newLeadForm, name: v})} />
+                  <Input label="نام خانوادگی" value={newLeadForm.surname} onChange={(v: string) => setNewLeadForm({...newLeadForm, surname: v})} />
+                </div>
+                <Input label="شماره موبایل *" value={newLeadForm.phone} onChange={(v: string) => setNewLeadForm({...newLeadForm, phone: v})} />
+                
+                <div className="space-y-2">
+                  <label className="block text-sm font-bold text-gray-700">تخصیص به کارشناس</label>
+                  <select 
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
+                    value={newLeadForm.expert}
+                    onChange={e => setNewLeadForm({...newLeadForm, expert: e.target.value})}
+                  >
+                    <option value="">تخصیص خودکار (راند بین)</option>
+                    <option value="none">بدون تخصیص</option>
+                    {admins.filter(a => a.role === 'expert').map(a => (
+                      <option key={a.id} value={a.username}>{a.username}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button type="submit" className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-blue-500/20 hover:bg-blue-700 transition-all">ثبت سرنخ</button>
+                  <button type="button" onClick={() => setShowAddLeadModal(false)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-2xl font-black">انصراف</button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bulk Upload Modal */}
+      <AnimatePresence>
+        {showBulkLeadModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="bg-white rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl">
+              <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 to-teal-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                    <Plus size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-gray-900">آپلود دسته‌جمعی</h3>
+                    <p className="text-xs text-gray-400 font-bold mt-1">وارد کردن لیدها از طریق فایل اکسل</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowBulkLeadModal(false)} className="p-2 hover:bg-white rounded-xl transition-all"><X size={24} /></button>
+              </div>
+              <div className="p-8 space-y-6 text-right" dir="rtl">
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-gray-200 rounded-[2rem] p-10 flex flex-col items-center justify-center gap-4 hover:border-emerald-500 hover:bg-emerald-50/50 transition-all cursor-pointer"
+                >
+                  <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-md text-emerald-600">
+                    <Plus size={32} />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-black text-gray-700">{bulkFile ? bulkFile.name : 'انتخاب فایل اکسل (.xlsx)'}</p>
+                    <p className="text-[10px] text-gray-400 font-bold mt-1 uppercase">حداکثر حجم: ۱۰ مگابایت</p>
+                  </div>
+                  <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx,.xls,.csv" onChange={e => {
+                    if (e.target.files && e.target.files[0]) {
+                      setBulkFile(e.target.files[0]);
+                    }
+                  }} />
+                </div>
+
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="text-amber-600" size={20} />
+                    <p className="text-xs text-amber-900 font-bold leading-relaxed">فایل باید دارای ستون‌های 'نام'، 'نام خانوادگی' و 'شماره' باشد.</p>
+                  </div>
+                  <button onClick={downloadLeadTemplate} className="w-full sm:w-auto text-[10px] font-black text-amber-700 bg-white px-3 py-1.5 rounded-lg border border-amber-200 shadow-sm whitespace-nowrap">دانلود نمونه اکسل</button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-bold text-gray-700">شیوه تخصیص</label>
+                    <div className="flex gap-2">
+                      {['manual', 'round_robin'].map((mode: any) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setBulkLeadParams({...bulkLeadParams, assignment_mode: mode})}
+                          className={`flex-1 py-3 rounded-xl text-xs font-black transition-all ${bulkLeadParams.assignment_mode === mode ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-50 text-gray-500'}`}
+                        >
+                          {mode === 'manual' ? 'تخصیص دستی' : 'راند بین (خودکار)'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {bulkLeadParams.assignment_mode === 'manual' && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                      <label className="block text-sm font-bold text-gray-700">انتخاب کارشناس مقصد</label>
+                      <select 
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
+                        value={bulkLeadParams.expert}
+                        onChange={e => setBulkLeadParams({...bulkLeadParams, expert: e.target.value})}
+                      >
+                        <option value="">انتخاب کارشناس...</option>
+                        {admins.filter(a => a.role === 'expert').map(a => (
+                          <option key={a.id} value={a.username}>{a.username}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    disabled={isProcessingBulk || !bulkFile}
+                    onClick={handleBulkUpload} 
+                    className="flex-3 bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-emerald-500/20 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                  >
+                    {isProcessingBulk ? <Loader2 className="animate-spin" /> : <Save size={20} />}
+                    <span>{isProcessingBulk ? 'در حال پردازش...' : 'تایید و آپلود نهایی'}</span>
+                  </button>
+                  <button type="button" onClick={() => setShowBulkLeadModal(false)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-2xl font-black">انصراف</button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -2621,6 +3651,117 @@ export default function AdminDashboard() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {showUserProfile && selectedUserProfile && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[120] flex items-center justify-end p-0 sm:p-4 overflow-hidden">
+             <motion.div 
+               initial={{ x: '100%' }}
+               animate={{ x: 0 }}
+               exit={{ x: '100%' }}
+               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+               className="bg-white h-full sm:h-[calc(100vh-2rem)] w-full max-w-lg sm:rounded-[2.5rem] shadow-2xl relative flex flex-col"
+               dir="rtl"
+             >
+                <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gradient-to-l from-gray-50 to-white">
+                   <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-blue-600 text-white rounded-3xl flex items-center justify-center shadow-xl shadow-blue-500/30">
+                         <UserIcon size={32} />
+                      </div>
+                      <div>
+                         <h2 className="text-2xl font-black text-gray-900">{selectedUserProfile.user.username}</h2>
+                         <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full font-black uppercase tracking-tighter">
+                               {selectedUserProfile.user.role}
+                            </span>
+                            {new Date(selectedUserProfile.user.last_active_at) > new Date(Date.now() - 5 * 60 * 1000) ? (
+                               <span className="flex items-center gap-1 text-[10px] font-black text-emerald-500">
+                                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                                  ONLINE
+                               </span>
+                            ) : (
+                               <span className="text-[10px] font-black text-gray-400">آخرین بازدید: {new Date(selectedUserProfile.user.last_active_at).toLocaleString('fa-IR', { timeStyle: 'short', dateStyle: 'short' })}</span>
+                            )}
+                         </div>
+                      </div>
+                   </div>
+                   <button onClick={() => setShowUserProfile(false)} className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-red-50 hover:text-red-500 transition-all">
+                      <X size={24} />
+                   </button>
+                </div>
+
+                 <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+                    {/* Quick Stats */}
+                    <div className="grid grid-cols-2 gap-4">
+                       <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100">
+                          <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">فروش تایید شده</p>
+                          <p className="text-xl font-black text-emerald-900">{(selectedUserProfile.stats.total_amount || 0).toLocaleString()} <span className="text-[10px] font-medium">تومان</span></p>
+                       </div>
+                       <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100">
+                          <p className="text-[10px] font-black text-blue-600 uppercase mb-1">تعداد فاکتورها</p>
+                          <p className="text-xl font-black text-blue-900">{selectedUserProfile.stats.total_sales || 0} <span className="text-[10px] font-medium">عدد</span></p>
+                       </div>
+                    </div>
+
+                    {/* Activity Timeline */}
+                    <div className="space-y-4">
+                       <h3 className="font-black text-gray-900 flex items-center gap-2">
+                          <History size={20} className="text-gray-400" />
+                          تاریخچه فعالیت‌های اخیر
+                       </h3>
+                       <div className="space-y-4 relative before:absolute before:right-6 before:top-4 before:bottom-4 before:w-0.5 before:bg-gray-100">
+                          {(selectedUserProfile.activity || []).map((act: any) => (
+                            <div key={act.id} className="relative pr-12">
+                               <div className="absolute right-4 top-1 w-4 h-4 bg-white border-2 border-gray-200 rounded-full z-10" />
+                               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-50 group hover:border-gray-200 transition-colors">
+                                  <div className="flex justify-between items-start mb-2">
+                                     <span className="text-[9px] bg-white px-2 py-0.5 rounded-full text-gray-400 font-bold border border-gray-100 uppercase">
+                                        {act.type}
+                                     </span>
+                                     <span className="text-[9px] text-gray-400 font-mono" dir="ltr">
+                                        {new Date(act.created_at).toLocaleString('fa-IR', { timeStyle: 'short', dateStyle: 'short' })}
+                                     </span>
+                                  </div>
+                                  <p className="text-xs text-gray-700 font-medium leading-relaxed">{act.content}</p>
+                               </div>
+                            </div>
+                          ))}
+                          {(selectedUserProfile.activity || []).length === 0 && (
+                             <div className="text-center py-5 text-gray-300 text-xs font-bold">هیچ فعالیت ثبتی موجود نیست</div>
+                          )}
+                       </div>
+                    </div>
+
+                    {/* Login/Logout History */}
+                    <div className="space-y-4 pb-8">
+                       <h3 className="font-black text-gray-900 flex items-center gap-2">
+                          <LogIn size={20} className="text-gray-400" />
+                          تاریخچه ورود و خروج
+                       </h3>
+                       <div className="bg-gray-50 rounded-3xl p-4 space-y-2">
+                          {(selectedUserProfile.logs || []).map((log: any) => (
+                            <div key={log.id} className="flex items-center justify-between p-3 bg-white rounded-xl shadow-sm border border-gray-100">
+                               <div className="flex items-center gap-2">
+                                 {log.type === 'login' ? <LogIn size={14} className="text-emerald-500" /> : <LogOut size={14} className="text-rose-500" />}
+                                 <span className={`text-[10px] font-black ${log.type === 'login' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    {log.type === 'login' ? 'ورود به سیستم' : 'خروج از سیستم'}
+                                 </span>
+                               </div>
+                               <span className="text-[9px] text-gray-400 font-mono" dir="ltr">
+                                  {new Date(log.created_at).toLocaleString('fa-IR', { timeStyle: 'short', dateStyle: 'short' })}
+                               </span>
+                            </div>
+                          ))}
+                          {(selectedUserProfile.logs || []).length === 0 && (
+                             <p className="text-center py-5 text-gray-300 text-[10px] font-black tracking-widest uppercase">داده‌ای یافت نشد</p>
+                          )}
+                       </div>
+                    </div>
+                 </div>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {reschedulingTask && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
             <motion.div 
@@ -2699,17 +3840,78 @@ const Section = ({ title, icon: Icon, children }: any) => (
   </div>
 );
 
-const Input = ({ label, value, onChange, type = "text" }: any) => (
+const Input = ({ label, value, onChange, type = "text", placeholder = "", dir = "rtl" }: any) => (
   <div className="space-y-2">
     <label className="block text-sm font-bold text-gray-700">{label}</label>
     <input 
       type={type} 
-      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500"
-      value={value}
+      dir={dir}
+      placeholder={placeholder}
+      className={`w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 ${dir === 'ltr' ? 'text-left font-mono' : 'text-right'}`}
+      value={value || ''}
       onChange={e => onChange(e.target.value)}
     />
   </div>
 );
+
+const ImageUploadInput = ({ label, value, onChange }: any) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    setUploading(true);
+    try {
+      const res = await axios.post('/api/upload', formData);
+      onChange(res.data.url);
+      toast.success('فایل با موفقیت آپلود شد');
+    } catch (err) {
+      toast.error('خطا در آپلود فایل');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-bold text-gray-700">{label}</label>
+      <div className="flex gap-2">
+        <div className="relative flex-grow">
+          <input 
+            type="text" 
+            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 pr-10"
+            value={value || ''}
+            onChange={e => onChange(e.target.value)}
+          />
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <ImageIcon size={18} />
+          </div>
+        </div>
+        <input 
+          type="file" 
+          className="hidden" 
+          ref={fileInputRef} 
+          onChange={handleUpload}
+          accept="image/*"
+        />
+        <button 
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2 min-w-[100px] disabled:opacity-50 shadow-lg shadow-blue-500/20"
+        >
+          {uploading ? <Loader2 size={18} className="animate-spin" /> : <Camera size={18} />}
+          <span className="text-xs font-bold">{uploading ? 'درحال آپلود...' : 'آپلود'}</span>
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const ICON_MAP: any = {
   Users, TrendingUp, CheckCircle2, Clock, Calendar, ShieldCheck, Globe, Star
